@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+import os, sys, time, struct, glob, json, subprocess, threading
+
+HOLD = float(os.environ.get("POWERKEY_HOLD", "1.2"))
+OFF_DELAY = float(os.environ.get("POWERKEY_OFF_DELAY", "600"))
+# empty = auto-detect (first non-headless output / an input device that looks
+# like a power key). Override with POWERKEY_OUTPUT / POWERKEY_DEVICE.
+OUTPUT = os.environ.get("POWERKEY_OUTPUT", "")
+DEVNAME = os.environ.get("POWERKEY_DEVICE", "")
+KEY_POWER = 116
+EVENT_SIZE = struct.calcsize("llHHi")
+
+os.environ.setdefault("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+
+ENV = dict(os.environ)
+try:
+    socks = sorted(
+        glob.glob(os.path.join(ENV["XDG_RUNTIME_DIR"], "sway-ipc.*.sock")),
+        key=os.path.getmtime,
+    )
+    if socks:
+        ENV["SWAYSOCK"] = socks[-1]
+except Exception:
+    pass
+
+state_lock = threading.Lock()
+off_timer = None
+
+
+def log(msg):
+    print("powerkeyd: %s" % msg, flush=True)
+
+
+def detect_output():
+    """First non-headless sway output."""
+    try:
+        out = subprocess.check_output(["swaymsg", "-t", "get_outputs"], env=ENV)
+        for o in json.loads(out):
+            if not o.get("headless") and o.get("name"):
+                return o["name"]
+    except Exception:
+        pass
+    return ""
+
+
+def detect_device():
+    """An input device whose name looks like a power key."""
+    for path in sorted(glob.glob("/sys/class/input/event*/device/name")):
+        try:
+            name = open(path).read().strip()
+        except OSError:
+            continue
+        low = name.lower()
+        if "power" in low or "pek" in low:
+            return name
+    return ""
+
+
+def find_device():
+    names = []
+    for path in sorted(glob.glob("/sys/class/input/event*/device/name")):
+        try:
+            names.append((open(path).read().strip(),
+                          "/dev/input/" + path.split("/")[4]))
+        except OSError:
+            continue
+    if DEVNAME:
+        for name, dev in names:
+            if name == DEVNAME:
+                return dev
+        return None
+    for name, dev in names:
+        low = name.lower()
+        if "power" in low or "pek" in low:
+            return dev
+    return None
+
+
+def dpms_on():
+    try:
+        out = subprocess.check_output(["swaymsg", "-t", "get_outputs"], env=ENV)
+        for o in json.loads(out):
+            if o.get("name") == OUTPUT:
+                return bool(o.get("dpms", True))
+    except Exception:
+        pass
+    return True
+
+
+def run(cmd):
+    try:
+        subprocess.run(cmd, env=ENV, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+    except Exception as e:
+        log("run error %s: %s" % (cmd, e))
+
+
+def do_poweroff():
+    global off_timer
+    with state_lock:
+        off_timer = None
+    if dpms_on():
+        return
+    log("poweroff setelah %.0fs layar mati" % OFF_DELAY)
+    run(["systemctl", "poweroff"])
+
+
+def schedule_poweroff():
+    global off_timer
+    with state_lock:
+        if off_timer is None:
+            off_timer = threading.Timer(OFF_DELAY, do_poweroff)
+            off_timer.daemon = True
+            off_timer.start()
+            log("layar mati, poweroff dalam %.0fs" % OFF_DELAY)
+
+
+def cancel_poweroff():
+    global off_timer
+    with state_lock:
+        if off_timer is not None:
+            off_timer.cancel()
+            off_timer = None
+            log("poweroff dibatalkan")
+
+
+def short_action():
+    if dpms_on():
+        run(["swaymsg", "output", OUTPUT, "dpms", "off"])
+        schedule_poweroff()
+    else:
+        cancel_poweroff()
+        run(["swaymsg", "output", OUTPUT, "dpms", "on"])
+
+
+def long_action():
+    cancel_poweroff()
+    if not dpms_on():
+        run(["swaymsg", "output", OUTPUT, "dpms", "on"])
+    try:
+        if subprocess.run(["pgrep", "-x", "swaynag"],
+                          stdout=subprocess.DEVNULL).returncode == 0:
+            return
+    except Exception:
+        pass
+    cmd = [
+        "swaynag", "-y", "overlay", "-e", "top", "-f", "sans 20",
+        "-m", "Daya",
+        "-B", "Matikan", "systemctl poweroff",
+        "-B", "Mulai ulang", "systemctl reboot",
+        "-Z", "Batal", "true",
+        "--background", "1e1e2e", "--text", "cdd6f4",
+        "--button-background", "313244", "--button-text", "cdd6f4",
+        "--border", "89b4fa",
+        "--button-padding", "16", "--button-gap", "14",
+        "--message-padding", "14",
+    ]
+    try:
+        subprocess.Popen(cmd, env=ENV, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception as e:
+        log("swaynag error: %s" % e)
+
+
+def main():
+    global OUTPUT
+    if not OUTPUT:
+        OUTPUT = detect_output()
+    if not OUTPUT:
+        log("tidak ada output sway yang bisa dipakai")
+        return 1
+    dev = find_device()
+    if not dev:
+        log("device %s tidak ditemukan" % (DEVNAME or "(power key)"))
+        return 1
+    log("membaca %s" % dev)
+    fd = os.open(dev, os.O_RDONLY)
+    buf = b""
+    press = 0.0
+    while True:
+        chunk = os.read(fd, EVENT_SIZE * 64)
+        if not chunk:
+            time.sleep(0.2)
+            continue
+        buf += chunk
+        while len(buf) >= EVENT_SIZE:
+            sec, usec, etype, code, value = struct.unpack("llHHi",
+                                                          buf[:EVENT_SIZE])
+            buf = buf[EVENT_SIZE:]
+            if not (etype == 1 and code == KEY_POWER):
+                continue
+            if value == 1:
+                press = time.time()
+            elif value == 0 and press:
+                dur = time.time() - press
+                press = 0.0
+                if dur >= HOLD:
+                    long_action()
+                else:
+                    short_action()
+
+
+if __name__ == "__main__":
+    arg = sys.argv[1] if len(sys.argv) > 1 else ""
+    if arg == "--test-short":
+        short_action()
+    elif arg == "--test-sleep":
+        run(["swaymsg", "output", OUTPUT, "dpms", "off"])
+        schedule_poweroff()
+        time.sleep(60)
+    elif arg == "--test-long":
+        long_action()
+    else:
+        sys.exit(main())

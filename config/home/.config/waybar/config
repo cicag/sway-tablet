@@ -1,0 +1,74 @@
+{
+  "layer": "overlay",
+  "position": "bottom",
+  "height": 48,
+  "modules-left": [
+    "custom/launcher",
+    "custom/ws1",
+    "custom/ws2"
+  ],
+  "modules-center": [
+    "clock"
+  ],
+  "modules-right": [
+    "custom/keyboard",
+    "custom/rotate",
+    "custom/panel",
+    "battery"
+  ],
+  "clock": {
+    "format": "{:%a %H:%M}",
+    "tooltip": false
+  },
+  "battery": {
+    "format": "{capacity}%",
+    "states": {
+      "warning": 30,
+      "critical": 15
+    },
+    "tooltip": false
+  },
+  "custom/launcher": {
+    "format": "Apps",
+    "tooltip": false,
+    "exec": "$HOME/.local/bin/waybar-app-state.sh appmenu Apps",
+    "return-type": "json",
+    "interval": 1,
+    "on-click": "$HOME/.local/bin/waybar-app-toggle.sh appmenu $HOME/.local/bin/appmenu"
+  },
+  "custom/ws1": {
+    "exec": "$HOME/.local/bin/waybar-ws.sh 1",
+    "return-type": "json",
+    "interval": 1,
+    "tooltip": false,
+    "on-click": "swaymsg workspace 1"
+  },
+  "custom/ws2": {
+    "exec": "$HOME/.local/bin/waybar-ws.sh 2",
+    "return-type": "json",
+    "interval": 1,
+    "tooltip": false,
+    "on-click": "swaymsg workspace 2"
+  },
+  "custom/keyboard": {
+    "format": "Kbd",
+    "tooltip": false,
+    "exec": "$HOME/.local/bin/waybar-kbd-state.sh",
+    "return-type": "json",
+    "interval": 1,
+    "on-click": "$HOME/.local/bin/waybar-kbd.sh"
+  },
+  "custom/rotate": {
+    "format": "Rot",
+    "tooltip": false,
+    "on-click": "$HOME/.local/bin/waybar-rotate.sh"
+  },
+  "custom/panel": {
+    "format": "Set",
+    "tooltip": false,
+    "exec": "$HOME/.local/bin/waybar-app-state.sh controlpanel Set",
+    "return-type": "json",
+    "interval": 1,
+    "on-click": "$HOME/.local/bin/waybar-app-toggle.sh controlpanel $HOME/.local/bin/controlpanel"
+  }
+}

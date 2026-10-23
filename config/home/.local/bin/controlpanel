@@ -1,0 +1,1052 @@
+#!/usr/bin/env python3
+import gi, subprocess, threading, time, os, math, re, sys, shlex
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gtk, Gdk, GLib, Pango, GdkPixbuf
+
+
+class HSlider(Gtk.DrawingArea):
+    def __init__(self, lo, hi, value, cb, scale=1.0):
+        super().__init__()
+        self.lo, self.hi = lo, hi
+        self.value = value
+        self.cb = cb
+        self.pad = max(8, int(round(23 * scale)))
+        self.th = max(8, int(round(25 * scale)))
+        self.knob = max(8, int(round(19 * scale)))
+        self.set_size_request(-1, max(28, int(round(69 * scale))))
+        self.set_hexpand(True)
+        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK |
+                        Gdk.EventMask.BUTTON1_MOTION_MASK |
+                        Gdk.EventMask.TOUCH_MASK)
+        self.dragging = False
+        self.armed = False
+        GLib.timeout_add(600, self._arm)
+        self.connect("draw", self.on_draw)
+        self.connect("button-press-event", self.on_press)
+        self.connect("button-release-event", self.on_release)
+        self.connect("motion-notify-event", self.on_motion)
+
+    def _arm(self):
+        self.armed = True
+        return False
+
+    def set_value(self, v, notify=True):
+        v = max(self.lo, min(self.hi, v))
+        self.value = v
+        self.queue_draw()
+        if notify and self.cb:
+            self.cb(v)
+
+    def _value_from_x(self, x):
+        w = self.get_allocated_width()
+        left, right = self.pad, w - self.pad
+        if right <= left:
+            return self.value
+        frac = max(0.0, min(1.0, (x - left) / float(right - left)))
+        return self.lo + frac * (self.hi - self.lo)
+
+    def on_press(self, _w, e):
+        if not self.armed:
+            return False
+        self.dragging = True
+        self.set_value(self._value_from_x(e.x))
+        return True
+
+    def on_release(self, _w, _e):
+        self.dragging = False
+        return False
+
+    def on_motion(self, _w, e):
+        if not self.dragging:
+            return False
+        self.set_value(self._value_from_x(e.x))
+        return True
+
+    def _round(self, cr, x, y, w, h, r):
+        r = min(r, w / 2.0, h / 2.0) if h > 0 else w / 2.0
+        if h <= 0 or w <= 0:
+            return
+        cr.new_sub_path()
+        cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+        cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+        cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+        cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+        cr.close_path()
+
+    def on_draw(self, w, cr):
+        W = self.get_allocated_width()
+        H = self.get_allocated_height()
+        cy = H / 2.0
+        th = self.th
+        y = cy - th / 2.0
+        x0, x1 = self.pad, W - self.pad
+        cr.set_source_rgb(0x1e / 255, 0x1e / 255, 0x2e / 255)
+        self._round(cr, x0, y, x1 - x0, th, th / 2.0)
+        cr.fill()
+        frac = (self.value - self.lo) / float(self.hi - self.lo)
+        fx = x0 + frac * (x1 - x0)
+        cr.set_source_rgb(*hex_rgb(ACCENT))
+        self._round(cr, x0, y, fx - x0, th, th / 2.0)
+        cr.fill()
+        cr.set_source_rgb(0xcd / 255, 0xd6 / 255, 0xf4 / 255)
+        cr.arc(fx, cy, self.knob, 0, 2 * math.pi)
+        cr.fill()
+
+HOME = os.path.expanduser("~")
+SWAY_DIR = os.environ.get("SWAY_CONFIG_DIR", os.path.join(HOME, ".config", "sway"))
+BIN_DIR = os.path.join(HOME, ".local", "bin")
+
+# backlight device: override with BACKLIGHT=/sys/class/backlight/<name>
+def _detect_backlight():
+    base = "/sys/class/backlight"
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        names = []
+    if "intel_backlight" in names:
+        return os.path.join(base, "intel_backlight")
+    if names:
+        return os.path.join(base, names[0])
+    return os.path.join(base, "intel_backlight")
+
+
+BACKLIGHT = os.environ.get("BACKLIGHT") or _detect_backlight()
+WALL_FILE = os.path.join(SWAY_DIR, "wallpaper")
+WALL_DIRS = [os.path.join(HOME, "wallpapers"), os.path.join(HOME, "Pictures")]
+WALL_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+
+
+def list_wallpapers():
+    seen, out = set(), []
+    for d in WALL_DIRS:
+        try:
+            names = sorted(os.listdir(d))
+        except Exception:
+            continue
+        for n in names:
+            p = os.path.join(d, n)
+            if n.lower().endswith(WALL_EXTS) and os.path.isfile(p) and p not in seen:
+                seen.add(p)
+                out.append(p)
+    return out
+
+
+def current_wallpaper():
+    try:
+        return open(WALL_FILE).read().strip()
+    except Exception:
+        return ""
+
+
+ACCENT_FILE = os.path.join(SWAY_DIR, "accent")
+ACCENT_DEF = "#89b4fa"
+ONACC_DEF = "#1e1e2e"
+ACCENT = ACCENT_DEF
+ONACC = ONACC_DEF
+
+
+def load_accent():
+    global ACCENT, ONACC
+    try:
+        toks = open(ACCENT_FILE).read().split()
+        ACCENT = toks[0] if toks else ACCENT_DEF
+        ONACC = toks[1] if len(toks) > 1 else ONACC_DEF
+    except Exception:
+        ACCENT, ONACC = ACCENT_DEF, ONACC_DEF
+    return ACCENT, ONACC
+
+
+def hex_rgb(c):
+    c = (c or "#000000").lstrip("#")
+    try:
+        return (int(c[0:2], 16) / 255.0, int(c[2:4], 16) / 255.0,
+                int(c[4:6], 16) / 255.0)
+    except Exception:
+        return (0.54, 0.71, 0.98)
+
+
+def hex_darken(c, f):
+    r, g, b = hex_rgb(c)
+    return "#%02x%02x%02x" % (int(r * 255 * f), int(g * 255 * f), int(b * 255 * f))
+
+def ui_scale():
+    try:
+        disp = Gdk.Display.get_default()
+        mon = disp.get_primary_monitor() or disp.get_monitor(0)
+        g = mon.get_geometry()
+        return 1.0 if g.width >= g.height else 1.2
+    except Exception:
+        return 1.25
+
+
+def make_css(scale):
+    def p(x):
+        return max(1, int(round(x * scale)))
+    return ("""
+window { background-color: #1e1e2e; }
+.title { font-size: %(title)dpx; font-weight: bold; color: #cdd6f4; }
+.close { background-image: none; background-color: #f38ba8; color: #1e1e2e;
+         font-size: %(cf)dpx; padding: %(cpy)dpx %(cpx)dpx; border-radius: %(cr)dpx; }
+.card { background-color: #313244; border-radius: %(crd)dpx; }
+.rowlabel { font-size: %(rl)dpx; color: #cdd6f4; }
+.value { font-size: %(vl)dpx; color: %(accent)s; font-weight: bold; }
+.sub { font-size: %(sub)dpx; color: #a6adc8; }
+switch { font-size: %(swf)dpx; background-image: none; border: none;
+         border-radius: %(swr)dpx; }
+switch:checked { background-image: none; background-color: %(accent)s; }
+switch slider { min-width: %(sws)dpx; min-height: %(sws)dpx;
+                border-radius: %(swsr)dpx; background-color: #cdd6f4; }
+button.scan { background-image: none; background-color: %(accent)s; color: %(onacc)s;
+              font-size: %(scf)dpx; padding: %(scpy)dpx %(scpx)dpx;
+              border-radius: %(scr)dpx; min-width: 0; min-height: 0; }
+button.item { background-image: none; background-color: #45475a; color: #cdd6f4;
+              font-size: %(itf)dpx; padding: %(itpy)dpx %(itpx)dpx;
+              border-radius: %(itr)dpx; min-width: 0; min-height: 0; }
+button.item:hover { background-image: none; background-color: #585b70; }
+button.item.on { background-image: none; background-color: %(accent)s; color: %(onacc)s;
+                 font-weight: bold; }
+button.item.on:hover { background-image: none; background-color: %(accenth)s; }
+button.thumb { background-image: none; background-color: #1e1e2e;
+               border: 2px solid #45475a; border-radius: 8px;
+               padding: 2px; min-width: 0; min-height: 0; }
+button.thumb:hover { background-image: none; background-color: #313244; }
+button.thumb.on { border-color: %(accent)s; }
+""" % {
+        "title": p(20), "cf": p(16), "cpy": p(7), "cpx": p(19), "cr": p(9),
+        "crd": p(12), "rl": p(15), "vl": p(14), "sub": p(11),
+        "swf": p(17), "swr": p(13), "sws": p(22), "swsr": p(11),
+        "scf": p(13), "scpy": p(7), "scpx": p(11), "scr": p(8),
+        "itf": p(13), "itpy": p(8), "itpx": p(12), "itr": p(8),
+        "accent": ACCENT, "onacc": ONACC, "accenth": hex_darken(ACCENT, 0.85),
+    })
+
+
+def apply_css(scale):
+    load_accent()
+    prov = Gtk.CssProvider()
+    prov.load_from_data(make_css(scale).encode())
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), prov,
+        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    return prov
+
+
+def run(cmd, timeout=12):
+    try:
+        out = subprocess.run(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, timeout=timeout,
+                             env=dict(os.environ, NO_COLOR="1"))
+        return out.stdout.decode(errors="replace").strip()
+    except Exception:
+        return ""
+
+
+PLOG = "/tmp/panel-diag.log"
+
+
+def plog(msg):
+    try:
+        with open(PLOG, "a") as f:
+            f.write(time.strftime("%H:%M:%S ") + str(msg) + "\n")
+    except Exception:
+        pass
+
+
+def qrun(cmd, timeout=12):
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           timeout=timeout, env=dict(os.environ, NO_COLOR="1"))
+        return (p.returncode,
+                p.stdout.decode(errors="replace").strip(),
+                p.stderr.decode(errors="replace").strip())
+    except Exception as e:
+        return -1, "", str(e)
+
+
+def tsplit(line):
+    out, cur, esc = [], [], False
+    for ch in line:
+        if esc:
+            cur.append(ch); esc = False
+        elif ch == "\\":
+            esc = True
+        elif ch == ":":
+            out.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur))
+    return out
+
+
+def read_backlight():
+    try:
+        cur = int(open(BACKLIGHT + "/brightness").read().strip())
+        mx = int(open(BACKLIGHT + "/max_brightness").read().strip())
+        return int(round(cur * 100.0 / mx)), mx
+    except Exception:
+        return 50, 100
+
+
+def read_volume():
+    s = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"])
+    try:
+        return max(0, min(100, int(round(float(s.split()[1]) * 100))))
+    except Exception:
+        return 50
+
+
+def list_streams():
+    import json as _json
+    try:
+        p = subprocess.run(["pw-dump"], stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, timeout=8,
+                           env=dict(os.environ, NO_COLOR="1"))
+        data = _json.loads(p.stdout.decode(errors="replace") or "[]")
+    except Exception:
+        return []
+    out = []
+    for o in data:
+        info = o.get("info", {}) or {}
+        props = info.get("props", {}) or {}
+        if "Stream/Output" not in props.get("media.class", ""):
+            continue
+        app = (props.get("application.name") or props.get("node.name")
+               or props.get("media.name") or "app")
+        name = props.get("media.name") or props.get("node.name") or ""
+        vol, mute = 100, False
+        for pr in (info.get("params", {}) or {}).get("Props", []) or []:
+            if "volume" in pr:
+                try:
+                    vol = max(0, min(150, int(round(float(pr["volume"]) * 100))))
+                except Exception:
+                    pass
+            if "mute" in pr:
+                mute = bool(pr["mute"])
+        out.append({"id": o.get("id"), "app": app, "name": name,
+                    "vol": vol, "mute": mute})
+    return out
+
+
+def list_sinks():
+    out = run(["wpctl", "status"])
+    sinks, inside = [], False
+    for line in out.splitlines():
+        if "Sinks:" in line:
+            inside = True
+            continue
+        if inside and ("Sources:" in line or "Sink endpoints" in line or
+                       "Sources endpoints" in line or "Filters:" in line or
+                       "Devices:" in line):
+            break
+        if inside:
+            m = re.match(r"\s*[│├└─\s]*(\*?)\s*(\d+)\.\s*(.+?)\s*\[vol:", line)
+            if m:
+                sinks.append({"default": m.group(1) == "*",
+                              "id": int(m.group(2)), "name": m.group(3).strip()})
+    return sinks
+
+
+def wifi_enabled():
+    return run(["nmcli", "radio", "wifi"]).strip() == "enabled"
+
+
+def bt_enabled():
+    for line in run(["bluetoothctl", "show"]).splitlines():
+        if "Powered:" in line:
+            return line.split(":")[1].strip().lower() == "yes"
+    return False
+
+
+def wifi_iface():
+    for line in run(["nmcli", "-t", "-f", "DEVICE,TYPE", "dev", "status"]).splitlines():
+        f = tsplit(line)
+        if len(f) >= 2 and f[1] == "wifi":
+            return f[0]
+    return "wlan0"
+
+
+def wifi_info():
+    iface = wifi_iface()
+    ip = gw = dns = ""
+    out = run(["nmcli", "-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS",
+               "dev", "show", iface])
+    for line in out.splitlines():
+        if ":" not in line:
+            continue
+        k, v = line.split(":", 1)
+        if k.startswith("IP4.ADDRESS") and not ip:
+            ip = v.split("/")[0]
+        elif k == "IP4.GATEWAY" and not gw:
+            gw = v
+        elif k.startswith("IP4.DNS") and not dns:
+            dns = v
+    return iface, ip, gw, dns
+
+
+def wifi_list():
+    out = run(["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
+               "dev", "wifi", "list", "--rescan", "no"])
+    nets = []
+    for line in out.splitlines():
+        f = tsplit(line)
+        while len(f) < 4:
+            f.append("")
+        inuse, ssid, signal, sec = f[0], f[1], f[2], f[3]
+        if not ssid:
+            continue
+        try:
+            sig = int(signal)
+        except ValueError:
+            sig = 0
+        nets.append({"inuse": inuse.strip() in ("*", "yes"),
+                     "ssid": ssid, "signal": sig, "sec": sec})
+    return nets
+
+
+def bt_devices():
+    known, conn, paired = {}, set(), set()
+    for line in run(["bluetoothctl", "devices"]).splitlines():
+        p = line.split(" ", 2)
+        if len(p) == 3 and p[0] == "Device":
+            known[p[1]] = p[2]
+    for line in run(["bluetoothctl", "devices", "Connected"]).splitlines():
+        p = line.split(" ", 2)
+        if len(p) == 3:
+            conn.add(p[1])
+    for line in run(["bluetoothctl", "devices", "Paired"]).splitlines():
+        p = line.split(" ", 2)
+        if len(p) == 3:
+            paired.add(p[1])
+    return [{"mac": m, "name": n, "connected": m in conn,
+             "paired": m in paired} for m, n in known.items()]
+
+
+class Panel(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Pengaturan")
+        self.set_decorated(False)
+        self.fullscreen()
+        self.connect("key-press-event", self.on_key)
+        self.connect("destroy", Gtk.main_quit)
+        self.guard = True
+        self._sync = False
+        self.scale = ui_scale()
+        self.vol_pending = self.vol_to = None
+        self.bri_pending = self.bri_to = None
+        self.bri_max = 100
+        self.wifi_nets = []
+        self.bt_devs = []
+        self.sink_list = []
+        self._sink_guard = False
+        self.streams = []
+        self.app_sliders = []
+        self.wall_cur = current_wallpaper()
+        self.wall_btns = {}
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                        spacing=int(8 * self.scale))
+        for m in ("top", "bottom", "start", "end"):
+            getattr(root, "set_margin_" + m)(int(9 * self.scale))
+        self.add(root)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                      spacing=int(8 * self.scale))
+        title = Gtk.Label(label="Pengaturan")
+        title.get_style_context().add_class("title")
+        title.set_xalign(0)
+        bar.pack_start(title, True, True, 0)
+        close = Gtk.Button(label="Tutup")
+        close.get_style_context().add_class("close")
+        close.connect("clicked", lambda *a: Gtk.main_quit())
+        bar.pack_end(close, False, False, 0)
+        root.pack_start(bar, False, False, 0)
+
+        v = int(read_volume())
+        b, self.bri_max = read_backlight()
+        self.vol_card, self.vol, self.vol_val = self.slider_card(
+            "Volume", 0, 100, v, self.on_vol, devices=True)
+        self.app_card, self.app_box = self.streams_card()
+        self.bri_card, self.bri, self.bri_val = self.slider_card(
+            "Kecerahan", 5, 100, b, self.on_bri)
+        self.wifi_card = self.net_card("WiFi", "wifi")
+        self.bt_card = self.net_card("Bluetooth", "bt")
+        self.wall_card = self.wall_card_ui()
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                       spacing=int(8 * self.scale))
+        body.set_hexpand(True)
+        for c in (self.vol_card, self.app_card, self.bri_card, self.wifi_card,
+                  self.bt_card, self.wall_card):
+            body.pack_start(c, False, False, 0)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(True)
+        scroll.add(body)
+        root.pack_start(scroll, True, True, 0)
+
+        self.guard = False
+        self.refresh_wifi()
+        self.refresh_bt()
+        self.refresh_sinks()
+        self.refresh_wall()
+        self.refresh_streams()
+        GLib.timeout_add_seconds(5, self.refresh_sinks)
+        GLib.timeout_add_seconds(1, self.poll_volume)
+        GLib.timeout_add_seconds(2, self.refresh_streams)
+
+    def slider_card(self, name, lo, hi, value, cb, devices=False):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                       spacing=int(8 * self.scale))
+        card.get_style_context().add_class("card")
+        card.set_hexpand(True)
+        for m in ("top", "bottom", "start", "end"):
+            getattr(card, "set_margin_" + m)(int(8 * self.scale))
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                       spacing=int(8 * self.scale))
+        lbl = Gtk.Label(label=name)
+        lbl.get_style_context().add_class("rowlabel")
+        lbl.set_xalign(0)
+        head.pack_start(lbl, True, True, 0)
+        val = Gtk.Label(label="%d%%" % int(value))
+        val.get_style_context().add_class("value")
+        val.set_xalign(0)
+        head.pack_end(val, False, False, 0)
+        card.pack_start(head, False, False, 0)
+        scale = HSlider(lo, hi, int(value), cb, scale=self.scale)
+        scale.set_valign(Gtk.Align.CENTER)
+        card.pack_start(scale, False, False, 0)
+        if devices:
+            dlbl = Gtk.Label(label="Output (perangkat audio)")
+            dlbl.get_style_context().add_class("sub")
+            dlbl.set_xalign(0)
+            card.pack_start(dlbl, False, False, 0)
+            self.sink_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                                    spacing=int(5 * self.scale))
+            card.pack_start(self.sink_box, False, False, 0)
+        return card, scale, val
+
+    def net_card(self, title, kind):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                       spacing=int(8 * self.scale))
+        card.get_style_context().add_class("card")
+        for m in ("top", "bottom", "start", "end"):
+            getattr(card, "set_margin_" + m)(int(8 * self.scale))
+
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                       spacing=int(8 * self.scale))
+        lbl = Gtk.Label(label=title)
+        lbl.get_style_context().add_class("rowlabel")
+        lbl.set_xalign(0)
+        head.pack_start(lbl, True, True, 0)
+        sw = Gtk.Switch()
+        sw.set_halign(Gtk.Align.END)
+        head.pack_end(sw, False, False, 0)
+        card.pack_start(head, False, False, 0)
+
+        status = Gtk.Label(label="")
+        status.get_style_context().add_class("sub")
+        status.set_xalign(0)
+        status.set_line_wrap(True)
+        card.pack_start(status, False, False, 0)
+
+        rev = Gtk.Revealer()
+        rev.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                        spacing=int(7 * self.scale))
+        scan = Gtk.Button(label="Pindai ulang")
+        scan.get_style_context().add_class("scan")
+        items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                        spacing=int(5 * self.scale))
+        inner.pack_start(scan, False, False, 0)
+        inner.pack_start(items, False, False, 0)
+        rev.add(inner)
+        card.pack_start(rev, False, False, 0)
+
+        if kind == "wifi":
+            self.wifi_sw, self.wifi_rev = sw, rev
+            self.wifi_status, self.wifi_box = status, items
+            sw.set_active(wifi_enabled())
+            sw.connect("notify::active", self.on_wifi)
+            scan.connect("clicked", lambda *a: self.scan_wifi())
+        else:
+            self.bt_sw, self.bt_rev = sw, rev
+            self.bt_status, self.bt_box = status, items
+            sw.set_active(bt_enabled())
+            sw.connect("notify::active", self.on_bt)
+            scan.connect("clicked", lambda *a: self.scan_bt())
+        return card
+
+    def item_row(self, label, side, active, cb):
+        b = Gtk.Button()
+        b.get_style_context().add_class("item")
+        if active:
+            b.get_style_context().add_class("on")
+        h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                    spacing=int(7 * self.scale))
+        l = Gtk.Label(label=label)
+        l.set_xalign(0)
+        l.set_ellipsize(Pango.EllipsizeMode.END)
+        h.pack_start(l, True, True, 0)
+        if side:
+            s = Gtk.Label(label=side)
+            s.get_style_context().add_class("sub")
+            s.set_xalign(1)
+            h.pack_end(s, False, False, 0)
+        b.add(h)
+        b.connect("clicked", lambda *a: cb())
+        return b
+
+    def _clear(self, box):
+        for c in box.get_children():
+            box.remove(c)
+
+    def bg(self, fn):
+        threading.Thread(target=fn, daemon=True).start()
+
+    def refresh_wifi(self):
+        en = wifi_enabled()
+        self._set_switch(self.wifi_sw, en)
+        self.wifi_nets = wifi_list() if en else []
+        active = next((n for n in self.wifi_nets if n["inuse"]), None)
+        if not en:
+            self.wifi_status.set_text("nonaktif")
+        elif active:
+            txt = "Terhubung: %s (%d%% · %s)" % (
+                active["ssid"], active["signal"],
+                active["sec"] if active["sec"] and active["sec"] != "--"
+                else "terbuka")
+            iface, ip, gw, dns = wifi_info()
+            if iface:
+                txt += "\nPerangkat: %s" % iface
+            if ip:
+                txt += "\nIP: %s" % ip
+                if gw:
+                    txt += "  ·  Gateway: %s" % gw
+            if dns:
+                txt += "\nDNS: %s" % dns
+            self.wifi_status.set_text(txt)
+        else:
+            iface, _ip, _gw, _dns = wifi_info()
+            self.wifi_status.set_text(
+                "Tidak terhubung" + (" (%s)" % iface if iface else ""))
+        self._clear(self.wifi_box)
+        nets = sorted(self.wifi_nets, key=lambda n: (not n["inuse"], -n["signal"]))
+        for n in nets:
+            sec = n["sec"] if n["sec"] and n["sec"] != "--" else "terbuka"
+            side = "%d%% · %s" % (n["signal"], sec)
+            self.wifi_box.pack_start(
+                self.item_row(n["ssid"], side, bool(n["inuse"]),
+                              lambda nn=n: self.wifi_toggle(nn)),
+                False, False, 0)
+        self.wifi_box.show_all()
+        self.wifi_rev.set_reveal_child(en)
+
+    def refresh_bt(self):
+        en = bt_enabled()
+        self._set_switch(self.bt_sw, en)
+        self.bt_devs = bt_devices() if en else []
+        conn = [d for d in self.bt_devs if d["connected"]]
+        if not en:
+            self.bt_status.set_text("nonaktif")
+        elif conn:
+            self.bt_status.set_text("Terhubung: " +
+                                    ", ".join(d["name"] for d in conn))
+        else:
+            self.bt_status.set_text("Tidak terhubung")
+        self._clear(self.bt_box)
+        devs = sorted(self.bt_devs, key=lambda d: (not d["connected"],
+                      not d["paired"], d["name"].lower()))
+        for d in devs:
+            state = "terhubung" if d["connected"] else \
+                    ("tersimpan" if d["paired"] else "baru")
+            self.bt_box.pack_start(
+                self.item_row(d["name"], state, bool(d["connected"]),
+                              lambda dd=d: self.bt_toggle(dd)),
+                False, False, 0)
+        self.bt_box.show_all()
+        self.bt_rev.set_reveal_child(en)
+
+    def scan_wifi(self):
+        self.wifi_status.set_text("memindai...")
+        def work():
+            run(["nmcli", "dev", "wifi", "rescan"], timeout=15)
+            time.sleep(4)
+            GLib.idle_add(self.refresh_wifi)
+        self.bg(work)
+
+    def scan_bt(self):
+        self.bt_status.set_text("memindai...")
+        def work():
+            run(["bluetoothctl", "--timeout", "8", "scan", "on"], timeout=15)
+            GLib.idle_add(self.refresh_bt)
+        self.bg(work)
+
+    def wifi_toggle(self, n):
+        if n["inuse"]:
+            self.wifi_disconnect()
+            return
+        pw = None
+        if n["sec"] and n["sec"] not in ("", "--"):
+            pw = self.ask_password(n["ssid"])
+            if pw is None:
+                return
+        self.wifi_status.set_text("menyambung %s..." % n["ssid"])
+        ssid = n["ssid"]
+
+        def work():
+            cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+            if pw:
+                cmd += ["password", pw]
+            run(cmd, timeout=25)
+            GLib.idle_add(self.refresh_wifi)
+        self.bg(work)
+
+    def wifi_disconnect(self):
+        self.wifi_status.set_text("memutuskan...")
+
+        def work():
+            run(["nmcli", "dev", "disconnect", wifi_iface()], timeout=20)
+            GLib.idle_add(self.refresh_wifi)
+        self.bg(work)
+
+    def bt_toggle(self, d):
+        mac = d["mac"]
+        if d["connected"]:
+            def work():
+                run(["bluetoothctl", "disconnect", mac], timeout=20)
+                GLib.idle_add(self.refresh_bt)
+        else:
+            self.bt_status.set_text("menyambung %s..." % d["name"])
+
+            def work():
+                run(["bluetoothctl", "connect", mac], timeout=25)
+                GLib.idle_add(self.refresh_bt)
+        self.bg(work)
+
+    def ask_password(self, ssid):
+        dlg = Gtk.Dialog(title="Kata sandi", transient_for=self, modal=True)
+        dlg.add_button("Batal", Gtk.ResponseType.CANCEL)
+        dlg.add_button("Sambung", Gtk.ResponseType.OK)
+        dlg.set_default_size(420, -1)
+        area = dlg.get_content_area()
+        area.set_spacing(8)
+        for m in ("top", "bottom", "start", "end"):
+            getattr(area, "set_margin_" + m)(12)
+        lbl = Gtk.Label(label="Kata sandi untuk %s" % ssid)
+        lbl.set_xalign(0)
+        entry = Gtk.Entry()
+        entry.set_visibility(False)
+        entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+        entry.connect("activate", lambda *a: dlg.response(Gtk.ResponseType.OK))
+        area.add(lbl)
+        area.add(entry)
+        dlg.show_all()
+        resp = dlg.run()
+        pw = entry.get_text()
+        dlg.destroy()
+        return pw if resp == Gtk.ResponseType.OK else None
+
+    def on_vol(self, value):
+        v = int(value)
+        self.vol_val.set_text("%d%%" % v)
+        if self.guard:
+            return
+        self.vol_pending = v
+        if self.vol_to is None:
+            self.vol_to = GLib.timeout_add(120, self._apply_vol)
+
+    def _apply_vol(self):
+        self.vol_to = None
+        if self.vol_pending is not None:
+            v = max(0, min(100, int(self.vol_pending)))
+            run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@",
+                 "%.2f" % (v / 100.0)])
+        return False
+
+    def poll_volume(self):
+        if self.guard or self.vol is None:
+            return True
+        if self.vol_to is None and not self.vol.dragging:
+            v = int(read_volume())
+            if abs(v - self.vol.value) >= 1:
+                self.vol.set_value(v, notify=False)
+                self.vol_val.set_text("%d%%" % v)
+        return True
+
+    def on_bri(self, value):
+        v = int(value)
+        self.bri_val.set_text("%d%%" % v)
+        if self.guard:
+            return
+        self.bri_pending = v
+        if self.bri_to is None:
+            self.bri_to = GLib.timeout_add(120, self._apply_bri)
+
+    def _apply_bri(self):
+        self.bri_to = None
+        if self.bri_pending is not None:
+            raw = max(1, int(round(self.bri_pending * self.bri_max / 100.0)))
+            try:
+                with open(BACKLIGHT + "/brightness", "w") as f:
+                    f.write(str(raw))
+            except Exception:
+                pass
+        return False
+
+    def _set_switch(self, sw, val):
+        if sw.get_active() == val:
+            return
+        self._sync = True
+        sw.set_active(val)
+        self._sync = False
+
+    def on_wifi(self, sw, _p):
+        if self.guard or self._sync:
+            return
+        rc, _o, err = qrun(["nmcli", "radio", "wifi",
+                            "on" if sw.get_active() else "off"], timeout=15)
+        if rc != 0:
+            plog("wifi radio rc=%s err=%r" % (rc, err))
+        GLib.timeout_add(900, self.refresh_wifi)
+
+    def on_bt(self, sw, _p):
+        if self.guard or self._sync:
+            return
+        rc, _o, err = qrun(["bluetoothctl", "power",
+                            "on" if sw.get_active() else "off"], timeout=15)
+        if rc != 0:
+            plog("bt power rc=%s err=%r" % (rc, err))
+        GLib.timeout_add(900, self.refresh_bt)
+
+    def on_sink(self, sink):
+        if self._sink_guard or sink["default"]:
+            return
+        run(["wpctl", "set-default", str(sink["id"])])
+        GLib.timeout_add(700, self._reload_volume)
+
+    def _reload_volume(self):
+        v = int(read_volume())
+        self.vol.set_value(v, notify=False)
+        self.vol_val.set_text("%d%%" % v)
+        return False
+
+    def streams_card(self):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                       spacing=int(8 * self.scale))
+        card.get_style_context().add_class("card")
+        for m in ("top", "bottom", "start", "end"):
+            getattr(card, "set_margin_" + m)(int(8 * self.scale))
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                       spacing=int(8 * self.scale))
+        lbl = Gtk.Label(label="Volume aplikasi")
+        lbl.get_style_context().add_class("rowlabel")
+        lbl.set_xalign(0)
+        head.pack_start(lbl, True, True, 0)
+        card.pack_start(head, False, False, 0)
+        self.app_status = Gtk.Label(label="")
+        self.app_status.get_style_context().add_class("sub")
+        self.app_status.set_xalign(0)
+        card.pack_start(self.app_status, False, False, 0)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                      spacing=int(8 * self.scale))
+        card.pack_start(box, False, False, 0)
+        return card, box
+
+    def refresh_streams(self):
+        for sl in getattr(self, "app_sliders", []) or []:
+            if getattr(sl, "dragging", False):
+                return True
+        self.streams = list_streams()
+        self._clear(self.app_box)
+        self.app_sliders = []
+        if not self.streams:
+            self.app_status.set_text("Tidak ada aplikasi berbunyi")
+            self.app_box.show_all()
+            return
+        self.app_status.set_text("%d aplikasi" % len(self.streams))
+        for s in self.streams:
+            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                          spacing=int(4 * self.scale))
+            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                          spacing=int(6 * self.scale))
+            lbl = Gtk.Label(label=s["app"])
+            lbl.set_xalign(0)
+            lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            top.pack_start(lbl, True, True, 0)
+            val = Gtk.Label(label=("%d%%" % s["vol"]) if not s["mute"] else "mute")
+            val.get_style_context().add_class("value")
+            val.set_xalign(1)
+            top.pack_end(val, False, False, 0)
+            mute = Gtk.Button(label="Mute" if not s["mute"] else "Unmute")
+            mute.get_style_context().add_class("item")
+            if s["mute"]:
+                mute.get_style_context().add_class("on")
+            mute.connect("clicked", lambda b, ss=s: self.toggle_stream_mute(ss))
+            top.pack_end(mute, False, False, 0)
+            row.pack_start(top, False, False, 0)
+            sl = HSlider(0, 100, min(100, s["vol"]),
+                         lambda v, ss=s: self.set_stream_vol(ss, v),
+                         scale=self.scale * 0.85)
+            sl.set_valign(Gtk.Align.CENTER)
+            row.pack_start(sl, False, False, 0)
+            self.app_sliders.append(sl)
+            self.app_box.pack_start(row, False, False, 0)
+        self.app_box.show_all()
+
+    def set_stream_vol(self, s, value):
+        v = max(0, min(100, int(value)))
+        run(["pw-cli", "s", str(s["id"]), "Props",
+             "{ volume: %.3f }" % (v / 100.0)])
+
+    def toggle_stream_mute(self, s):
+        run(["pw-cli", "s", str(s["id"]), "Props",
+             "{ mute: %s }" % ("false" if s["mute"] else "true")])
+        GLib.timeout_add(300, self.refresh_streams)
+
+    def refresh_sinks(self):
+        self._sink_guard = True
+        try:
+            self.sink_list = list_sinks()
+            self._clear(self.sink_box)
+            for s in self.sink_list:
+                self.sink_box.pack_start(
+                    self.item_row(s["name"], "aktif" if s["default"] else "",
+                                  bool(s["default"]),
+                                  lambda ss=s: self.on_sink(ss)),
+                    False, False, 0)
+            self.sink_box.show_all()
+        finally:
+            self._sink_guard = False
+        return True
+
+    def wall_card_ui(self):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                       spacing=int(8 * self.scale))
+        card.get_style_context().add_class("card")
+        for m in ("top", "bottom", "start", "end"):
+            getattr(card, "set_margin_" + m)(int(8 * self.scale))
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                       spacing=int(8 * self.scale))
+        lbl = Gtk.Label(label="Wallpaper")
+        lbl.get_style_context().add_class("rowlabel")
+        lbl.set_xalign(0)
+        head.pack_start(lbl, True, True, 0)
+        more = Gtk.Button(label="Muat ulang")
+        more.get_style_context().add_class("scan")
+        more.connect("clicked", lambda *a: self.refresh_wall())
+        head.pack_end(more, False, False, 0)
+        card.pack_start(head, False, False, 0)
+
+        self.wall_status = Gtk.Label(label="")
+        self.wall_status.get_style_context().add_class("sub")
+        self.wall_status.set_xalign(0)
+        self.wall_status.set_line_wrap(True)
+        card.pack_start(self.wall_status, False, False, 0)
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        sw.set_overlay_scrolling(True)
+        sw.set_propagate_natural_height(True)
+        self.wall_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                  spacing=int(6 * self.scale))
+        sw.add(self.wall_strip)
+        card.pack_start(sw, False, False, 0)
+        return card
+
+    def thumb_btn(self, path, side):
+        b = Gtk.Button()
+        b.get_style_context().add_class("thumb")
+        img = Gtk.Image()
+        try:
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, side, side, True)
+            img.set_from_pixbuf(pb)
+        except Exception:
+            img.set_from_icon_name("image-x-generic", Gtk.IconSize.DIALOG)
+            img.set_pixel_size(side)
+        b.add(img)
+        b.set_tooltip_text(os.path.basename(path))
+        b.connect("clicked", lambda *a: self.set_wallpaper(path))
+        return b
+
+    def refresh_wall(self):
+        self.wall_cur = current_wallpaper()
+        pics = list_wallpapers()
+        self._clear(self.wall_strip)
+        self.wall_btns = {}
+        if not pics:
+            self.wall_status.set_text(
+                "Letakkan gambar di ~/wallpapers lalu Muat ulang")
+        else:
+            self.wall_status.set_text("%d gambar" % len(pics))
+        side = int(108 * self.scale)
+        for p in pics:
+            b = self.thumb_btn(p, side)
+            self.wall_btns[p] = b
+            self.wall_strip.pack_start(b, False, False, 0)
+        self.wall_strip.show_all()
+        self._mark_wall()
+
+    def _mark_wall(self):
+        for p, b in self.wall_btns.items():
+            ctx = b.get_style_context()
+            if p == self.wall_cur:
+                ctx.add_class("on")
+            else:
+                ctx.remove_class("on")
+
+    def set_wallpaper(self, path):
+        self.wall_cur = path
+        try:
+            os.makedirs(os.path.dirname(WALL_FILE), exist_ok=True)
+            with open(WALL_FILE, "w") as f:
+                f.write(path)
+        except Exception as e:
+            plog("wall save err %r" % e)
+        self._mark_wall()
+        if self.wall_status:
+            self.wall_status.set_text("dipasang: %s" % os.path.basename(path))
+        cmd = ("pkill -x swaybg; sleep 0.2; exec setsid swaybg -i %s -m fill"
+               % shlex.quote(path))
+        try:
+            subprocess.Popen(["sh", "-c", cmd], start_new_session=True,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        except Exception as e:
+            plog("swaybg err %r" % e)
+        self._refresh_accent()
+
+    def _refresh_accent(self):
+        def work():
+            run([os.path.join(BIN_DIR, "accent-update")], timeout=25)
+            GLib.idle_add(self._accent_done)
+        self.bg(work)
+
+    def _accent_done(self):
+        apply_css(self.scale)
+        for s in (self.vol, self.bri):
+            s.queue_draw()
+        return False
+
+    def on_key(self, _w, event):
+        if event.keyval == Gdk.KEY_Escape:
+            Gtk.main_quit()
+
+
+def main():
+    import traceback
+
+    def _hook(t, v, tb):
+        plog("EXC " + "".join(traceback.format_exception(t, v, tb)))
+    sys.excepthook = _hook
+    plog("--- panel start pid=%s scale=%s accent=%s ---" %
+         (os.getpid(), ui_scale(), load_accent()[0]))
+    apply_css(ui_scale())
+    win = Panel()
+    win.show_all()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

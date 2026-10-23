@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+import os, sys, glob, colorsys, subprocess
+
+HOME = os.path.expanduser("~")
+SWAY_DIR = os.environ.get("SWAY_CONFIG_DIR", os.path.join(HOME, ".config", "sway"))
+WALL_FILE = os.path.join(SWAY_DIR, "wallpaper")
+ACCENT_FILE = os.path.join(SWAY_DIR, "accent")
+COLORS_CONF = os.path.join(SWAY_DIR, "accent.conf")
+WAYBAR_CSS = os.path.join(HOME, ".config", "waybar", "style.css")
+DEFAULT_ACCENT = "#89b4fa"
+DEFAULT_FG = "#1e1e2e"
+URGENT = "#f38ba8"
+
+WAYBAR_TEMPLATE = """* {
+  font-family: sans-serif;
+  font-size: 12px;
+  border: none;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+}
+window#waybar {
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+}
+#custom-launcher,
+#clock,
+#battery,
+#network,
+#custom-keyboard,
+#custom-rotate,
+#custom-panel,
+#custom-ws1,
+#custom-ws2,
+#workspaces button {
+  padding: 0 8px;
+  margin: 4px 2px;
+  border-radius: 8px;
+  background-color: #313244;
+  color: #cdd6f4;
+}
+#custom-ws1,
+#custom-ws2,
+#custom-launcher,
+#custom-keyboard,
+#custom-rotate,
+#custom-panel {
+  padding: 0 12px;
+  font-size: 14px;
+  min-width: 55px;
+}
+#custom-launcher.on,
+#custom-keyboard.on,
+#custom-panel.on {
+  background-color: %(A)s;
+  color: %(F)s;
+  font-weight: bold;
+}
+#custom-ws1.active,
+#custom-ws2.active {
+  background-color: %(A)s;
+  color: %(F)s;
+  font-weight: bold;
+}
+#workspaces button {
+  padding: 0 6px;
+}
+#workspaces button.focused {
+  background-color: %(A)s;
+  color: %(F)s;
+}
+#workspaces button.urgent {
+  background-color: %(U)s;
+  color: %(F)s;
+}
+"""
+
+
+def hx(r, g, b):
+    return "#%02x%02x%02x" % tuple(max(0, min(255, int(round(v)))) for v in (r, g, b))
+
+
+def rel_lum(hexc):
+    c = hexc.lstrip("#")
+    r, g, b = (int(c[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    def f(v):
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+
+def pick_accent(path):
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    pb = GdkPixbuf.Pixbuf.new_from_file(path)
+    w, h = pb.get_width(), pb.get_height()
+    m = 96.0 / max(w, h)
+    if m < 1:
+        pb = pb.scale_simple(max(1, int(w * m)), max(1, int(h * m)),
+                             GdkPixbuf.InterpType.BILINEAR)
+    w, h = pb.get_width(), pb.get_height()
+    ch = pb.get_n_channels()
+    rs = pb.get_rowstride()
+    data = pb.get_pixels()
+    bins = [0.0] * 24
+    cnt = [0] * 24
+    sm = [[0.0, 0.0, 0.0] for _ in range(24)]
+    for y in range(h):
+        base = y * rs
+        for x in range(w):
+            i = base + x * ch
+            r, g, b = data[i], data[i + 1], data[i + 2]
+            hh, ss, vv = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+            if ss < 0.16 or vv < 0.14 or vv > 0.985:
+                continue
+            wt = ss * (1.0 - abs(vv - 0.58) * 0.9)
+            if wt <= 0:
+                continue
+            bi = int(hh * 24) % 24
+            bins[bi] += wt
+            cnt[bi] += 1
+            sm[bi][0] += r
+            sm[bi][1] += g
+            sm[bi][2] += b
+    best = max(range(24), key=lambda k: bins[k])
+    if cnt[best] < 4:
+        return None
+    r = sm[best][0] / cnt[best]
+    g = sm[best][1] / cnt[best]
+    b = sm[best][2] / cnt[best]
+    hh, ss, vv = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+    ss = max(ss, 0.55)
+    vv = min(max(vv, 0.5), 0.85)
+    r, g, b = colorsys.hsv_to_rgb(hh, ss, vv)
+    return hx(r * 255, g * 255, b * 255)
+
+
+def write_colors(accent, fg):
+    with open(COLORS_CONF, "w") as f:
+        f.write("client.focused          %s %s %s %s %s\n" % (accent, accent, fg, accent, accent))
+        f.write("client.focused_inactive #45475a #45475a #cdd6f4 #45475a #45475a\n")
+        f.write("client.unfocused        #313244 #313244 #a6adc8 #313244 #313244\n")
+        f.write("client.urgent           %s %s %s %s %s\n" % (URGENT, URGENT, fg, URGENT, URGENT))
+        f.write("client.placeholder      #1e1e2e #1e1e2e #cdd6f4 #1e1e2e #1e1e2e\n")
+        f.write("client.background       #1e1e2e\n")
+
+
+def apply():
+    env = dict(os.environ)
+    env.setdefault("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+    if "SWAYSOCK" not in env:
+        socks = glob.glob(env["XDG_RUNTIME_DIR"] + "/sway-ipc.*.sock")
+        if socks:
+            env["SWAYSOCK"] = max(socks, key=os.path.getmtime)
+    try:
+        subprocess.run(["swaymsg", "reload"], env=env, timeout=10,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    try:
+        subprocess.run(["pkill", "-SIGUSR2", "-x", "waybar"], timeout=5,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def main():
+    path = ""
+    try:
+        path = open(WALL_FILE).read().strip()
+    except Exception:
+        pass
+    accent = None
+    if path and os.path.isfile(path):
+        try:
+            accent = pick_accent(path)
+        except Exception as e:
+            sys.stderr.write("accent: %r\n" % e)
+    if not accent:
+        accent = DEFAULT_ACCENT
+    fg = DEFAULT_FG if rel_lum(accent) > 0.5 else "#f5f5f5"
+    with open(ACCENT_FILE, "w") as f:
+        f.write(accent + "\n" + fg + "\n")
+    write_colors(accent, fg)
+    with open(WAYBAR_CSS, "w") as f:
+        f.write(WAYBAR_TEMPLATE % {"A": accent, "F": fg, "U": URGENT})
+    apply()
+    print("accent=%s fg=%s from=%s" % (accent, fg, path or "(none)"))
+
+
+if __name__ == "__main__":
+    main()

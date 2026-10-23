@@ -1,0 +1,62 @@
+* {
+  font-family: sans-serif;
+  font-size: 12px;
+  border: none;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+}
+window#waybar {
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+}
+#custom-launcher,
+#clock,
+#battery,
+#network,
+#custom-keyboard,
+#custom-rotate,
+#custom-panel,
+#custom-ws1,
+#custom-ws2,
+#workspaces button {
+  padding: 0 8px;
+  margin: 4px 2px;
+  border-radius: 8px;
+  background-color: #313244;
+  color: #cdd6f4;
+}
+#custom-ws1,
+#custom-ws2,
+#custom-launcher,
+#custom-keyboard,
+#custom-rotate,
+#custom-panel {
+  padding: 0 12px;
+  font-size: 14px;
+  min-width: 55px;
+}
+#custom-launcher.on,
+#custom-keyboard.on,
+#custom-panel.on {
+  background-color: #8c272e;
+  color: #f5f5f5;
+  font-weight: bold;
+}
+#custom-ws1.active,
+#custom-ws2.active {
+  background-color: #8c272e;
+  color: #f5f5f5;
+  font-weight: bold;
+}
+#workspaces button {
+  padding: 0 6px;
+}
+#workspaces button.focused {
+  background-color: #8c272e;
+  color: #f5f5f5;
+}
+#workspaces button.urgent {
+  background-color: #f38ba8;
+  color: #f5f5f5;
+}

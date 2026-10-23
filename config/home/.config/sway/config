@@ -1,0 +1,33 @@
+font pango:sans 12
+exec sh -c '$HOME/.config/sway/autostart.sh'
+
+bindsym Mod4+Return exec alacritty
+bindsym Mod4+Shift+q kill
+bindsym Mod4+Shift+e exec swaynag -t warning -m 'Exit?' -b 'Ya' 'swaymsg exit'
+
+bindsym XF86AudioRaiseVolume exec wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+
+bindsym XF86AudioLowerVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bindsym XF86AudioMute        exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+
+input type:touchpad {
+    tap enabled
+    natural_scroll disabled
+}
+
+# Device-specific overrides go here (touch mapping, output rules, etc.).
+# Sway ignores non-matching globs, so this is safe on any machine.
+# Blocks must span several lines; a one-line `{ ... }` fails to parse.
+#   cat >> ~/.config/sway/local.conf <<EOF
+#   input "0:0:silead_ts" {
+#       map_to_output DSI-1
+#   }
+#   EOF
+include $HOME/.config/sway/local*.conf
+
+gaps inner 4
+gaps outer 3
+smart_borders off
+
+default_border pixel 1
+default_floating_border pixel 1
+include $HOME/.config/sway/accent.conf
