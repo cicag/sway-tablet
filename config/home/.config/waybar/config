@@ -21,7 +21,7 @@
     "tooltip": false
   },
   "battery": {
-    "format": "{capacity}%",
+    "format": "[{capacity}%]",
     "states": {
       "warning": 30,
       "critical": 15
@@ -29,14 +29,15 @@
     "tooltip": false
   },
   "custom/launcher": {
-    "format": "Apps",
+    "format": "[{}]",
     "tooltip": false,
-    "exec": "$HOME/.local/bin/waybar-app-state.sh appmenu Apps",
+    "exec": "$HOME/.local/bin/waybar-app-state.sh org.swaytablet.appmenu Apps",
     "return-type": "json",
     "interval": 1,
-    "on-click": "$HOME/.local/bin/waybar-app-toggle.sh appmenu $HOME/.local/bin/appmenu"
+    "on-click": "$HOME/.local/bin/waybar-app-toggle.sh org.swaytablet.appmenu python3 $HOME/.local/bin/appmenu.py"
   },
   "custom/ws1": {
+    "format": "[{}]",
     "exec": "$HOME/.local/bin/waybar-ws.sh 1",
     "return-type": "json",
     "interval": 1,
@@ -44,6 +45,7 @@
     "on-click": "swaymsg workspace 1"
   },
   "custom/ws2": {
+    "format": "[{}]",
     "exec": "$HOME/.local/bin/waybar-ws.sh 2",
     "return-type": "json",
     "interval": 1,
@@ -51,7 +53,7 @@
     "on-click": "swaymsg workspace 2"
   },
   "custom/keyboard": {
-    "format": "Kbd",
+    "format": "[{}]",
     "tooltip": false,
     "exec": "$HOME/.local/bin/waybar-kbd-state.sh",
     "return-type": "json",
@@ -59,16 +61,16 @@
     "on-click": "$HOME/.local/bin/waybar-kbd.sh"
   },
   "custom/rotate": {
-    "format": "Rot",
+    "format": "[Rot]",
     "tooltip": false,
     "on-click": "$HOME/.local/bin/waybar-rotate.sh"
   },
   "custom/panel": {
-    "format": "Set",
+    "format": "[{}]",
     "tooltip": false,
-    "exec": "$HOME/.local/bin/waybar-app-state.sh controlpanel Set",
+    "exec": "$HOME/.local/bin/waybar-app-state.sh org.swaytablet.controlpanel Set",
     "return-type": "json",
     "interval": 1,
-    "on-click": "$HOME/.local/bin/waybar-app-toggle.sh controlpanel $HOME/.local/bin/controlpanel"
+    "on-click": "$HOME/.local/bin/waybar-app-toggle.sh org.swaytablet.controlpanel $HOME/.local/bin/controlpanel"
   }
 }

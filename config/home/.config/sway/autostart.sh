@@ -25,14 +25,6 @@ sleep 0.5
 swaymsg 'gaps inner all set 4' >/dev/null 2>&1
 swaymsg 'gaps outer all set 3' >/dev/null 2>&1
 
-# two-finger scrolling helper (needs write access to /dev/uinput).
-# Runs only if the user can use sudo without a password prompt - otherwise
-# grant it with a sudoers rule, e.g.:
-#   %input  ALL=(root) NOPASSWD: /home/<user>/.local/bin/scrollbridge
-if [ -x "$BIN/scrollbridge" ]; then
-  sudo -n -p '' setsid "$BIN/scrollbridge" 150 0 1 >/dev/null 2>&1 &
-fi
-
 # power button (short press = screen, long press = power dialog)
 [ -x "$BIN/powerkeyd" ] && "$BIN/powerkeyd" >/tmp/powerkeyd.log 2>&1 &
 

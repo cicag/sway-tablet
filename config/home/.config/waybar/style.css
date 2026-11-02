@@ -1,6 +1,7 @@
 * {
-  font-family: sans-serif;
-  font-size: 12px;
+  font-family: "Berkeley Mono", "IBM Plex Mono", "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+  font-size: 16px;
+  font-weight: 400;
   border: none;
   min-height: 0;
   padding: 0;
@@ -18,45 +19,35 @@ window#waybar {
 #custom-rotate,
 #custom-panel,
 #custom-ws1,
-#custom-ws2,
-#workspaces button {
-  padding: 0 8px;
-  margin: 4px 2px;
-  border-radius: 8px;
+#custom-ws2 {
+  padding: 0 14px;
+  margin: 5px 4px;
+  border-radius: 4px;
   background-color: #313244;
   color: #cdd6f4;
 }
-#custom-ws1,
-#custom-ws2,
-#custom-launcher,
-#custom-keyboard,
-#custom-rotate,
-#custom-panel {
-  padding: 0 12px;
-  font-size: 14px;
-  min-width: 55px;
+#clock {
+  font-weight: 700;
 }
 #custom-launcher.on,
 #custom-keyboard.on,
 #custom-panel.on {
   background-color: #8c272e;
   color: #f5f5f5;
-  font-weight: bold;
+  font-weight: 700;
 }
 #custom-ws1.active,
 #custom-ws2.active {
   background-color: #8c272e;
   color: #f5f5f5;
-  font-weight: bold;
+  font-weight: 700;
 }
-#workspaces button {
-  padding: 0 6px;
+#battery.warning {
+  color: #ff9f0a;
 }
-#workspaces button.focused {
-  background-color: #8c272e;
-  color: #f5f5f5;
+#battery.critical {
+  color: #ff3b30;
 }
-#workspaces button.urgent {
-  background-color: #f38ba8;
-  color: #f5f5f5;
+#network.disconnected {
+  color: #6c7086;
 }

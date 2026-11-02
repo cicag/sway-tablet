@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+import os, subprocess
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk
+
+
+def load_accent():
+    p = os.path.join(os.path.expanduser("~"), ".config", "sway", "accent")
+    try:
+        t = open(p).read().split()
+    except OSError:
+        return "#8c272e", "#f5f5f5"
+    return (t[0] if t else "#8c272e",
+            t[1] if len(t) > 1 else "#f5f5f5")
+
+
+ACCENT, ONACC = load_accent()
+
+CSS = ("""
+window { background-color: #1e1e2e; color: #cdd6f4; }
+window, label, button {
+  font-family: "Berkeley Mono", "IBM Plex Mono", "Noto Sans Mono",
+               "DejaVu Sans Mono", monospace;
+  box-shadow: none; }
+.bar { border-bottom: 1px solid rgba(205,214,244,0.08); padding-bottom: 8px; }
+.title { font-size: 16px; font-weight: 700; color: #cdd6f4; }
+.close { background-image: none; background-color: #313244; color: #cdd6f4;
+         border: none; border-radius: 4px; padding: 4px 20px; font-size: 16px; }
+.close:hover { background-color: #45475a; }
+.box { padding: 16px; }
+button.item { background-image: none; background-color: #313244; color: #cdd6f4;
+              border: none; border-radius: 4px; padding: 10px 16px;
+              font-size: 16px; margin: 4px 0; }
+button.item:hover { background-color: #45475a; }
+button.danger { background-image: none; background-color: %(accent)s; color: %(onacc)s;
+                font-weight: 700; }
+button.danger:hover { background-image: none; background-color: %(accent)s; }
+""" % {"accent": ACCENT, "onacc": ONACC}).encode()
+
+
+class PowerMenu(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Daya")
+        self.set_decorated(False)
+        self.fullscreen()
+        self.connect("key-press-event", self.on_key)
+        self.connect("destroy", Gtk.main_quit)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        root.set_margin_top(16)
+        root.set_margin_bottom(16)
+        root.set_margin_start(16)
+        root.set_margin_end(16)
+        self.add(root)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bar.get_style_context().add_class("bar")
+        title = Gtk.Label(label="[+] Daya")
+        title.get_style_context().add_class("title")
+        title.set_xalign(0)
+        bar.pack_start(title, True, True, 0)
+        close = Gtk.Button(label="[x] Batal")
+        close.get_style_context().add_class("close")
+        close.connect("clicked", lambda *a: Gtk.main_quit())
+        bar.pack_end(close, False, False, 0)
+        root.pack_start(bar, False, False, 0)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.get_style_context().add_class("box")
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
+
+        def mk(label, cls, cmd):
+            b = Gtk.Button(label=label)
+            b.get_style_context().add_class("item")
+            if cls:
+                b.get_style_context().add_class(cls)
+            b.set_size_request(320, -1)
+            b.connect("clicked", lambda *_: self.run(cmd))
+            return b
+
+        box.pack_start(mk("[ ] Matikan", "danger", ["systemctl", "poweroff"]), False, False, 0)
+        box.pack_start(mk("[ ] Mulai ulang", None, ["systemctl", "reboot"]), False, False, 0)
+        box.pack_start(mk("[ ] Batal", None, None), False, False, 0)
+        root.pack_start(box, True, True, 0)
+
+    def run(self, cmd):
+        if cmd:
+            try:
+                subprocess.Popen(cmd, start_new_session=True,
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+        Gtk.main_quit()
+
+    def on_key(self, _w, event):
+        if event.keyval == Gdk.KEY_Escape:
+            Gtk.main_quit()
+
+
+def main():
+    prov = Gtk.CssProvider()
+    prov.load_from_data(CSS)
+    screen = Gdk.Screen.get_default()
+    Gtk.StyleContext.add_provider_for_screen(
+        screen, prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    win = PowerMenu()
+    win.show_all()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

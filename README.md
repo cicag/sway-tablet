@@ -91,7 +91,6 @@ screenshots/         screenshots of the running desktop
 | `appmenu` | fullscreen GTK3 application grid, launched from the waybar |
 | `controlpanel` | fullscreen GTK3 settings panel: volume, per-app volume, brightness, WiFi, Bluetooth, wallpaper |
 | `powerkeyd` | power button: short press toggles the screen, long press shows the power dialog |
-| `scrollbridge` | two-finger scrolling for the touchscreen (needs root) |
 | `waybar-app-state.sh` | reports `on`/`off` for a GTK `app_id` |
 | `waybar-app-toggle.sh` | launches an app, or kills it if already running |
 | `waybar-kbd.sh` / `waybar-kbd-state.sh` | toggles the on-screen keyboard and reports its state |
@@ -109,7 +108,6 @@ Kept out of the shipped configuration on purpose — enable them per machine:
 | Power key device / output | `powerkeyd` | auto-detected; `POWERKEY_DEVICE` / `POWERKEY_OUTPUT` override |
 | On-screen keyboard size | `waybar-kbd.sh` | `WVKBD_HEIGHT` / `WVKBD_LAYOUT` |
 | Renderer | session start | `WLR_RENDERER=vulkan` or `gles2` |
-| `scrollbridge` sudo rule | `/etc/sudoers.d/scrollbridge` | installed by `lp-w841_linux/install.sh`; or add a `NOPASSWD` rule |
 
 ## Documentation
 

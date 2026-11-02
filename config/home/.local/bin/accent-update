@@ -12,8 +12,9 @@ DEFAULT_FG = "#1e1e2e"
 URGENT = "#f38ba8"
 
 WAYBAR_TEMPLATE = """* {
-  font-family: sans-serif;
-  font-size: 12px;
+  font-family: "Berkeley Mono", "IBM Plex Mono", "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+  font-size: 16px;
+  font-weight: 400;
   border: none;
   min-height: 0;
   padding: 0;
@@ -31,47 +32,37 @@ window#waybar {
 #custom-rotate,
 #custom-panel,
 #custom-ws1,
-#custom-ws2,
-#workspaces button {
-  padding: 0 8px;
-  margin: 4px 2px;
-  border-radius: 8px;
+#custom-ws2 {
+  padding: 0 14px;
+  margin: 5px 4px;
+  border-radius: 4px;
   background-color: #313244;
   color: #cdd6f4;
 }
-#custom-ws1,
-#custom-ws2,
-#custom-launcher,
-#custom-keyboard,
-#custom-rotate,
-#custom-panel {
-  padding: 0 12px;
-  font-size: 14px;
-  min-width: 55px;
+#clock {
+  font-weight: 700;
 }
 #custom-launcher.on,
 #custom-keyboard.on,
 #custom-panel.on {
   background-color: %(A)s;
   color: %(F)s;
-  font-weight: bold;
+  font-weight: 700;
 }
 #custom-ws1.active,
 #custom-ws2.active {
   background-color: %(A)s;
   color: %(F)s;
-  font-weight: bold;
+  font-weight: 700;
 }
-#workspaces button {
-  padding: 0 6px;
+#battery.warning {
+  color: #ff9f0a;
 }
-#workspaces button.focused {
-  background-color: %(A)s;
-  color: %(F)s;
+#battery.critical {
+  color: #ff3b30;
 }
-#workspaces button.urgent {
-  background-color: %(U)s;
-  color: %(F)s;
+#network.disconnected {
+  color: #6c7086;
 }
 """
 
@@ -164,6 +155,17 @@ def apply():
         pass
 
 
+def read_existing_accent():
+    try:
+        with open(ACCENT_FILE) as f:
+            value = f.readline().strip()
+    except Exception:
+        return None
+    if len(value) == 7 and value.startswith("#"):
+        return value
+    return None
+
+
 def main():
     path = ""
     try:
@@ -177,7 +179,9 @@ def main():
         except Exception as e:
             sys.stderr.write("accent: %r\n" % e)
     if not accent:
-        accent = DEFAULT_ACCENT
+        # No wallpaper (or no usable colour): keep the accent already in use
+        # instead of resetting the theme on every login.
+        accent = read_existing_accent() or DEFAULT_ACCENT
     fg = DEFAULT_FG if rel_lum(accent) > 0.5 else "#f5f5f5"
     with open(ACCENT_FILE, "w") as f:
         f.write(accent + "\n" + fg + "\n")

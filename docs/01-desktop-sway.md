@@ -8,7 +8,7 @@ sway
   -> ~/.config/sway/config
        -> ~/.config/sway/autostart.sh
             -> swaybg, waybar (on-screen keyboard on demand via the Kbd
-               button), accent-update, scrollbridge, powerkeyd
+               button), accent-update, powerkeyd
 ```
 
 **This repo does not decide how the session is started.** Starting sway from a
@@ -167,7 +167,6 @@ sleep 0.5
 [ -x "$BIN/accent-update" ] && "$BIN/accent-update"                   # wallpaper-derived theme
 swaymsg 'gaps inner all set 4' >/dev/null 2>&1
 swaymsg 'gaps outer all set 3' >/dev/null 2>&1
-sudo -n -p '' setsid "$BIN/scrollbridge" 150 0 1 >/dev/null 2>&1 &    # 2-finger scroll
 [ -x "$BIN/powerkeyd" ] && "$BIN/powerkeyd" >/tmp/powerkeyd.log 2>&1 &  # power key
 export TERMINAL=alacritty
 ```
@@ -179,11 +178,6 @@ export TERMINAL=alacritty
 - **waybar** the panel.
 - **accent-update** derives an accent color from the wallpaper and rewrites the
   theme (below).
-- **scrollbridge** adds two-finger scrolling to the touchscreen; it needs root
-  (for the input device), hence the `sudo`. It is started with `sudo -n`, so
-  it only runs if the user may use sudo without a password. The companion
-  `lp-w841_linux/install.sh` installs that sudoers rule; otherwise add a
-  `NOPASSWD` rule for `~/.local/bin/scrollbridge` yourself.
 - **powerkeyd** implements power-button behaviour (below).
 
 ## Theme / accent color
