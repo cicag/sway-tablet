@@ -6,7 +6,7 @@ Touch-first **sway** desktop for small tablets — dotfiles, helper scripts and 
 waybar/on-screen-keyboard setup.
 
 Originally written for the
-[Wearness LP-E841](https://github.com/cicag/lp-w841_linux) (Intel Atom Z3735,
+[Wearness LP-W841](https://github.com/cicag/lp-w841_linux) (Intel Atom Z3735,
 1 GB RAM, 800x1280 portrait), but the configuration is **device agnostic**:
 paths are relative to `$HOME`, and the hardware-specific parts (touchscreen
 mapping, backlight device, output name) are auto-detected or left commented
@@ -89,12 +89,12 @@ screenshots/         screenshots of the running desktop
 |---|---|
 | `accent-update` | derives an accent color from the wallpaper, rewrites `accent.conf` and the waybar stylesheet |
 | `appmenu` | fullscreen GTK3 application grid, launched from the waybar |
-| `controlpanel` | fullscreen GTK3 settings panel: volume, per-app volume, brightness, WiFi, Bluetooth, wallpaper |
+| `controlpanel` | fullscreen GTK3 settings panel: volume + output devices with merged app volume, brightness, WiFi (scan/connect/disconnect/forget), Bluetooth (scan/connect/disconnect/forget/battery), centered wallpaper carousel (max 7 thumbnails portrait / 11 landscape, stretched to span the row and looped when there are fewer), plus a fixed bar for rotate/shutdown/restart/ZeroTier |
 | `powerkeyd` | power button: short press toggles the screen, long press shows the power dialog |
 | `waybar-app-state.sh` | reports `on`/`off` for a GTK `app_id` |
 | `waybar-app-toggle.sh` | launches an app, or kills it if already running |
 | `waybar-kbd.sh` / `waybar-kbd-state.sh` | toggles the on-screen keyboard and reports its state |
-| `waybar-rotate.sh` | cycles the output transform |
+| `waybar-rotate.sh` | cycles the output transform (manual use; the control panel owns the waybar-facing rotate tile) |
 | `waybar-ws.sh` | workspace buttons for the waybar |
 
 ## Device-specific bits
@@ -114,19 +114,13 @@ Kept out of the shipped configuration on purpose — enable them per machine:
 | Doc | Contents |
 |---|---|
 | [docs/01-desktop-sway.md](docs/01-desktop-sway.md) | Starting a session, sway config, autostart, theme, panel, touch apps, power key |
+| [docs/02-troubleshooting.md](docs/02-troubleshooting.md) | Power key shutting down immediately (logind), waybar missing after login (portal activation), control panel not appearing (CSS placeholder mismatch) |
+| [docs/03-appimage-appmenu.md](docs/03-appimage-appmenu.md) | Registering AppImages from `~/Applications` as app-menu entries via `.desktop` files, icons, examples and troubleshooting |
 
 ## Screenshots
 
-Captured on the device with `grim` under the **GLES2** renderer (screen capture
-does not work under the Vulkan renderer).
+Captured on the device with `grim`.
 
-| Desktop (wallpaper + waybar + on-screen keyboard) | App grid | Settings panel |
-|---|---|---|
-| ![desktop](screenshots/01-desktop.png) | ![apps](screenshots/02-apps.png) | ![settings](screenshots/03-settings.png) |
-
-## Notes
-
-- The panel and the touch apps scale themselves from the current output
-  transform, so the desktop works in portrait and landscape.
-- `controlpanel` mirrors the real Bluetooth/WiFi state: the toggle only stays
-  on when the adapter is actually up.
+| Desktop (wallpaper + waybar + on-screen keyboard) | Control panel | Power menu | App grid |
+|---|---|---|---|
+| ![desktop](screenshots/01-desktop.png) | ![control panel](screenshots/02-controlpanel.png) | ![power menu](screenshots/03-powermenu.png) | ![app grid](screenshots/04-appmenu.png) |

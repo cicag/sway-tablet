@@ -1,0 +1,241 @@
+/* Shared GTK3 theme for sway-tablet apps (appmenu, controlpanel, powermenu).
+ *
+ * Accent/foreground colors are substituted at load time by the apps below.
+ * Reusable classes:
+ *   .window      root panel background
+ *   .bar         top title bar (border bottom)
+ *   .title       bold header label
+ *   .close       close button (top-right)
+ *   .box         padded container (replaces .card)
+ *   .btn         default action button
+ *   .btn-item    list/grid item button (replaces button.item)
+ *   .btn-danger  destructive action button (accent bg)
+ *   .btn-thumb   thumb/switch button (replaces button.thumb)
+ *   .label-sub    secondary muted label (replaces .sub)
+ *   .label-sub.accent  bold accent value label (replaces .value)
+ *   .label-sub.bold    bold label (replaces .rowlabel)
+ *   .toggle      switch toggle
+ *   .slider      horizontal slider track
+ */
+
+window {
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+}
+
+window, label, button {
+  font-family: "Berkeley Mono", "IBM Plex Mono", "Noto Sans Mono",
+               "DejaVu Sans Mono", monospace;
+  box-shadow: none;
+}
+
+/* ---- title bar -------------------------------------------------------- */
+.bar {
+  border-bottom: 1px solid rgba(205, 214, 244, 0.08);
+  padding-bottom: 8px;
+}
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #cdd6f4;
+}
+
+/* ---- close button ----------------------------------------------------- */
+.close {
+  background-image: none;
+  background-color: #2a2b35;
+  color: #cdd6f4;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 20px;
+  font-size: 16px;
+}
+.close:hover {
+  background-color: %(accent_rgba_40)s;
+}
+
+/* ---- containers ------------------------------------------------------- */
+.box {
+  background-color: #2a2b35;
+  border: 1px solid rgba(205,214,244,0.12);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+/* ---- buttons ---------------------------------------------------------- */
+button {
+  background-image: none;
+  background-color: #2a2b35;
+  color: #cdd6f4;
+  border: none;
+  border-radius: 4px;
+  padding: 8px;
+}
+button:hover {
+  background-color: %(accent_rgba_40)s;
+}
+button:active {
+  background-color: %(accent_rgba_25)s;
+  color: %(onacc)s;
+}
+
+/* default item buttons */
+.btn-item {
+  background-image: none;
+  background-color: %(accent_rgba_25)s;
+  color: #cdd6f4;
+  border: 1px solid rgba(205,214,244,0.12);
+  border-radius: 4px;
+  padding: 10px 16px;
+  font-size: 14px;
+  margin: 4px 0;
+}
+.btn-item:hover {
+  background-color: %(accent_rgba_40)s;
+}
+.btn-item.on {
+  background-image: none;
+  background-color: %(accent_rgba_25)s;
+  color: %(onacc)s;
+  font-weight: 700;
+}
+.btn-item.on:hover {
+  background-color: %(accent_rgba_25)s;
+}
+
+/* destructive action button */
+.btn-danger {
+  background-image: none;
+  background-color: %(accent_rgba_25)s;
+  color: %(onacc)s;
+  font-weight: 700;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 16px;
+}
+.btn-danger:hover {
+  background-color: %(accent_rgba_25)s;
+}
+
+/* thumb / switch buttons */
+.btn-thumb {
+  background-image: none;
+  background-color: #2a2b35;
+  border: 1px solid rgba(205,214,244,0.12);
+  border-radius: 4px;
+  padding: 2px;
+  min-width: 0;
+  min-height: 0;
+}
+.btn-thumb:hover {
+  background-color: #2a2b35;
+}
+.btn-thumb.on {
+  border-color: %(accent)s;
+}
+
+/* ---- toggle / switch -------------------------------------------------- */
+.toggle {
+  background-image: none;
+  background-color: #2a2b35;
+  border: none;
+  border-radius: 16px;
+  min-width: 48px;
+  min-height: 24px;
+}
+.toggle:checked {
+  background-color: %(accent_rgba_25)s;
+}
+.toggle slider {
+  background-color: #cdd6f4;
+}
+
+/* ---- slider ----------------------------------------------------------- */
+.slider {
+  background-image: none;
+  background-color: #2a2b35;
+  border-radius: 4px;
+  min-height: 8px;
+}
+.slider-track {
+  background-color: %(accent_rgba_25)s;
+  border-radius: 4px;
+  min-height: 8px;
+}
+
+/* ---- labels ----------------------------------------------------------- */
+.label-sub {
+  font-size: 14px;
+  color: #a6adc8;
+}
+.label-sub.accent {
+  color: %(accent)s;
+  font-weight: 700;
+}
+.label-sub.bold {
+  font-size: 16px;
+  color: #cdd6f4;
+  font-weight: 700;
+}
+
+/* ---- misc ------------------------------------------------------------- */
+.vbox {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+.appname {
+  font-size: 14px;
+  color: #a6adc8;
+}
+
+/* ---- controlpanel scale-aware overrides (loaded by make_css) --------- */
+/* controlpanel.py reads this file as base and injects its own
+   scale variables (font-size, padding, border-radius) at runtime.       */
+.card, .box { background-color: #2a2b35; border: 1px solid rgba(205, 214, 244, 0.14); border-radius: 4px; padding: 12px; }
+.rowlabel, .label-sub.bold { font-size: 15px; color: #cdd6f4; font-weight: 700; }
+.value, .label-sub.accent { font-size: 14px; color: %(accent)s; font-weight: bold; }
+.sub, .label-sub { font-size: 11px; color: #a6adc8; }
+
+/* Controlpanel buttons mapped to shared classes */
+button.scan { background-color: %(accent_rgba_25)s; color: %(onacc)s; font-size: 13px; padding: 7px 11px; border-radius: 8px; min-width: 0; min-height: 0; }
+button.item { background-color: %(accent_rgba_40)s; color: #cdd6f4; font-size: 13px; padding: 8px 12px; border-radius: 4px; min-width: 0; min-height: 0; }
+button.item:hover { background-color: #585b70; }
+button.item.on { background-color: %(accent_rgba_25)s; color: %(onacc)s; font-weight: bold; }
+button.item.on:hover { background-color: %(accent_rgba_25)s; }
+button.thumb { background-color: #1e1e2e; border: 2px solid #45475a; border-radius: 8px; padding: 2px; min-width: 0; min-height: 0; }
+button.thumb:hover { background-color: #2a2b35; }
+button.thumb.on { border-color: %(accent)s; }
+
+/* Switch / slider for controlpanel */
+switch { font-size: 17px; background-image: none; border: none; border-radius: 13px; }
+switch:checked { background-color: %(accent_rgba_25)s; }
+switch slider { min-width: 22px; min-height: 22px; border-radius: 11px; background-color: #cdd6f4; }
+
+/* Slider track for controlpanel */
+.slider { background-color: #2a2b35; border-radius: 4px; min-height: 8px; }
+.slider-track { background-color: %(accent_rgba_25)s; border-radius: 4px; min-height: 8px; }
+flowbox, scrolledwindow, viewport {
+  background-color: transparent;
+}
+/* ---- text inputs / modal dialogs (DESIGN.md text-input) --------------- */
+entry {
+  background-image: none;
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+  border: 1px solid rgba(205, 214, 244, 0.18);
+  border-radius: 4px;
+  padding: 8px 12px;
+  min-height: 24px;
+}
+entry:focus {
+  border-color: %(accent)s;
+}
+dialog, .dialog {
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+}
+dialog .content-area, dialog box {
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+}

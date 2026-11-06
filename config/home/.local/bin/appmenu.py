@@ -2,7 +2,7 @@
 import os
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gio, Gdk
+from gi.repository import Gtk, Gio, Gdk, GLib
 
 
 def load_accent():
@@ -16,6 +16,16 @@ def load_accent():
 
 
 ACCENT, ONACC = load_accent()
+
+def hex_to_rgba(h, a):
+    h = h.lstrip('#')
+    r = int(h[0:2], 16)
+    g = int(h[2:4], 16)
+    b = int(h[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {a})"
+ACCENT_RGBA_25 = hex_to_rgba(ACCENT, 0.25)
+ACCENT_RGBA_40 = hex_to_rgba(ACCENT, 0.40)
+ACCENT_RGBA_20 = hex_to_rgba(ACCENT, 0.20)
 
 CSS = ("""
 window { background-color: #1e1e2e; color: #cdd6f4; }
@@ -36,7 +46,15 @@ button:active { background-color: %(accent)s; color: %(onacc)s; }
 button:active .appname { color: %(onacc)s; }
 .appname { font-size: 14px; color: #a6adc8; }
 flowbox, scrolledwindow, viewport { background-color: transparent; }
-""" % {"accent": ACCENT, "onacc": ONACC}).encode()
+.app-tile {
+  background-image: none;
+  background-color: %(accent_rgba_20)s;
+  color: #cdd6f4;
+  border: 1px solid rgba(205,214,244,0.12);
+  border-radius: 4px;
+}
+.app-tile:hover { background-color: %(accent_rgba_40)s; }
+""" % {"accent": ACCENT, "onacc": ONACC, "accent_rgba_25": ACCENT_RGBA_25, "accent_rgba_40": ACCENT_RGBA_40, "accent_rgba_20": ACCENT_RGBA_20}).encode()
 
 
 class AppMenu(Gtk.Window):
@@ -47,11 +65,7 @@ class AppMenu(Gtk.Window):
         self.set_skip_pager_hint(True)
         self.fullscreen()
         try:
-            self.set_wmclass(org.swaytablet.appmenu, org.swaytablet.appmenu)
-        except Exception:
-            pass
-        try:
-            self.set_role(org.swaytablet.appmenu)
+            self.set_role("org.swaytablet.appmenu")
         except Exception:
             pass
         self.connect("key-press-event", self.on_key)
@@ -70,7 +84,7 @@ class AppMenu(Gtk.Window):
         title.get_style_context().add_class("title")
         title.set_xalign(0)
         bar.pack_start(title, True, True, 0)
-        close = Gtk.Button(label="[x] Tutup")
+        close = Gtk.Button(label="[x] Close")
         close.get_style_context().add_class("close")
         close.connect("clicked", lambda *a: Gtk.main_quit())
         bar.pack_end(close, False, False, 0)
@@ -95,6 +109,7 @@ class AppMenu(Gtk.Window):
 
     def make_button(self, app):
         b = Gtk.Button()
+        b.get_style_context().add_class("app-tile")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_halign(Gtk.Align.CENTER)
         box.set_valign(Gtk.Align.CENTER)
@@ -136,6 +151,13 @@ class AppMenu(Gtk.Window):
 
 
 def main():
+    # GTK3 on Wayland derives app_id from the program name; set it before the
+    # first window is created so waybar can find/kill this grid by app_id.
+    GLib.set_prgname("org.swaytablet.appmenu")
+    try:
+        Gdk.set_program_class("org.swaytablet.appmenu")
+    except Exception:
+        pass
     prov = Gtk.CssProvider()
     prov.load_from_data(CSS)
     screen = Gdk.Screen.get_default()

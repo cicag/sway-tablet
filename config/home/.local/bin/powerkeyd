@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import os, sys, time, struct, glob, json, subprocess, threading
 
-HOLD = float(os.environ.get("POWERKEY_HOLD", "1.2"))
-OFF_DELAY = float(os.environ.get("POWERKEY_OFF_DELAY", "600"))
+HOLD = 1.2
+OFF_DELAY = 300  # 5 minutes shutdown
 # empty = auto-detect (first non-headless output / an input device that looks
 # like a power key). Override with POWERKEY_OUTPUT / POWERKEY_DEVICE.
 OUTPUT = os.environ.get("POWERKEY_OUTPUT", "")
@@ -101,7 +101,7 @@ def do_poweroff():
         off_timer = None
     if dpms_on():
         return
-    log("poweroff setelah %.0fs layar mati" % OFF_DELAY)
+    log("poweroff in %.0fs (screen off)" % OFF_DELAY)
     run(["systemctl", "poweroff"])
 
 
@@ -112,7 +112,7 @@ def schedule_poweroff():
             off_timer = threading.Timer(OFF_DELAY, do_poweroff)
             off_timer.daemon = True
             off_timer.start()
-            log("layar mati, poweroff dalam %.0fs" % OFF_DELAY)
+            log("screen off, poweroff in %.0fs" % OFF_DELAY)
 
 
 def cancel_poweroff():
@@ -121,7 +121,7 @@ def cancel_poweroff():
         if off_timer is not None:
             off_timer.cancel()
             off_timer = None
-            log("poweroff dibatalkan")
+            log("poweroff cancelled")
 
 
 def short_action():
@@ -137,29 +137,23 @@ def long_action():
     cancel_poweroff()
     if not dpms_on():
         run(["swaymsg", "output", OUTPUT, "dpms", "on"])
+    menu = os.path.join(os.path.dirname(os.path.abspath(__file__)), "powermenu")
     try:
-        if subprocess.run(["pgrep", "-x", "swaynag"],
+        if subprocess.run(["pgrep", "-f", menu],
                           stdout=subprocess.DEVNULL).returncode == 0:
             return
     except Exception:
         pass
-    cmd = [
-        "swaynag", "-y", "overlay", "-e", "top", "-f", "sans 20",
-        "-m", "Daya",
-        "-B", "Matikan", "systemctl poweroff",
-        "-B", "Mulai ulang", "systemctl reboot",
-        "-Z", "Batal", "true",
-        "--background", "1e1e2e", "--text", "cdd6f4",
-        "--button-background", "313244", "--button-text", "cdd6f4",
-        "--border", "89b4fa",
-        "--button-padding", "16", "--button-gap", "14",
-        "--message-padding", "14",
-    ]
+    env = dict(ENV)
+    env.setdefault("WAYLAND_DISPLAY", "wayland-1")
+    env["GDK_BACKEND"] = "wayland"
+    cmd = [menu]
     try:
-        subprocess.Popen(cmd, env=ENV, stdout=subprocess.DEVNULL,
+        subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
+        log("powermenu opened")
     except Exception as e:
-        log("swaynag error: %s" % e)
+        log("powermenu error: %s" % e)
 
 
 def main():
@@ -167,13 +161,13 @@ def main():
     if not OUTPUT:
         OUTPUT = detect_output()
     if not OUTPUT:
-        log("tidak ada output sway yang bisa dipakai")
+        log("no usable sway output")
         return 1
     dev = find_device()
     if not dev:
-        log("device %s tidak ditemukan" % (DEVNAME or "(power key)"))
+        log("device %s not found" % (DEVNAME or "(power key)"))
         return 1
-    log("membaca %s" % dev)
+    log("reading %s" % dev)
     fd = os.open(dev, os.O_RDONLY)
     buf = b""
     press = 0.0

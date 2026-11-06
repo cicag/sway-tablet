@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
-import os, subprocess
+"""Power menu - fullscreen, DESIGN.md structure with the dark tablet theme.
+
+Structure follows DESIGN.md: monospaced text, bracketed [+] / [x] ASCII
+markers, hairline-bordered .box cards, 4px radii and .btn-item /
+.btn-danger action buttons. Colours are intentionally the tablet's dark
+theme (#1e1e2e / accent) instead of DESIGN.md's cream palette.
+"""
+import os
+import subprocess
 import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, GLib
 
 
 def load_accent():
@@ -17,73 +26,168 @@ def load_accent():
 
 ACCENT, ONACC = load_accent()
 
-CSS = ("""
-window { background-color: #1e1e2e; color: #cdd6f4; }
-window, label, button {
-  font-family: "Berkeley Mono", "IBM Plex Mono", "Noto Sans Mono",
-               "DejaVu Sans Mono", monospace;
-  box-shadow: none; }
-.bar { border-bottom: 1px solid rgba(205,214,244,0.08); padding-bottom: 8px; }
-.title { font-size: 16px; font-weight: 700; color: #cdd6f4; }
-.close { background-image: none; background-color: #313244; color: #cdd6f4;
-         border: none; border-radius: 4px; padding: 4px 20px; font-size: 16px; }
-.close:hover { background-color: #45475a; }
-.box { padding: 16px; }
-button.item { background-image: none; background-color: #313244; color: #cdd6f4;
-              border: none; border-radius: 4px; padding: 10px 16px;
-              font-size: 16px; margin: 4px 0; }
-button.item:hover { background-color: #45475a; }
-button.danger { background-image: none; background-color: %(accent)s; color: %(onacc)s;
-                font-weight: 700; }
-button.danger:hover { background-image: none; background-color: %(accent)s; }
-""" % {"accent": ACCENT, "onacc": ONACC}).encode()
+
+def hex_to_rgba(c, a):
+    c = (c or "#000000").lstrip("#")
+    try:
+        r = int(c[0:2], 16)
+        g = int(c[2:4], 16)
+        b = int(c[4:6], 16)
+        return "rgba(%d, %d, %d, %s)" % (r, g, b, a)
+    except Exception:
+        return "rgba(140, 39, 46, %s)" % a
+
+
+def load_css():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "gtk-theme.css")
+    return (open(path).read() % {
+        "accent": ACCENT,
+        "onacc": ONACC,
+        "accent_rgba_25": hex_to_rgba(ACCENT, 0.25),
+        "accent_rgba_40": hex_to_rgba(ACCENT, 0.40),
+    }).encode()
+
+
+CSS = load_css()
+
+# Local additions on top of the shared theme, still dark + accent.
+EXTRA_CSS = b"""
+.pm-content { padding: 24px 16px; }
+.pm-box { padding: 20px; }
+.pm-box .label-sub.bold { margin-bottom: 8px; }
+.pm-btn {
+  min-height: 56px;
+  padding: 12px 24px;
+  font-size: 18px;
+  margin: 6px 0;
+}
+.pm-btn.btn-danger { font-weight: 700; }
+.pm-secondary {
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 15px;
+}
+"""
+
+# Restart the bar in the background. waybar is a layer-shell client, so it has
+# to keep the session's WAYLAND_DISPLAY / DBUS env (inherited from powermenu).
+WAYBAR_RESTART = [
+    "sh", "-c",
+    "pkill -x waybar 2>/dev/null; sleep 0.3; "
+    "exec setsid waybar >/tmp/waybar.log 2>&1",
+]
+
+# Hide the bar when it is running, show it again when it is not.  This is the
+# same session environment as WAYBAR_RESTART, so the new client attaches to
+# the running compositor.
+WAYBAR_TOGGLE = [
+    "sh", "-c",
+    "if pgrep -x waybar >/dev/null 2>&1; then pkill -x waybar; "
+    "else exec setsid waybar >/tmp/waybar.log 2>&1; fi",
+]
+
+
+def waybar_running():
+    try:
+        return subprocess.run(
+            ["pgrep", "-x", "waybar"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    except OSError:
+        return False
 
 
 class PowerMenu(Gtk.Window):
     def __init__(self):
-        super().__init__(title="Daya")
+        super().__init__(title="Power")
         self.set_decorated(False)
-        self.fullscreen()
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        try:
+            self.set_role("org.swaytablet.powermenu")
+        except Exception:
+            pass
         self.connect("key-press-event", self.on_key)
         self.connect("destroy", Gtk.main_quit)
 
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         root.set_margin_top(16)
         root.set_margin_bottom(16)
         root.set_margin_start(16)
         root.set_margin_end(16)
         self.add(root)
 
+        # ---- title bar ---------------------------------------------------
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.get_style_context().add_class("bar")
-        title = Gtk.Label(label="[+] Daya")
+        title = Gtk.Label(label="[+] Power")
         title.get_style_context().add_class("title")
         title.set_xalign(0)
         bar.pack_start(title, True, True, 0)
-        close = Gtk.Button(label="[x] Batal")
+        close = Gtk.Button(label="[x] Cancel")
         close.get_style_context().add_class("close")
         close.connect("clicked", lambda *a: Gtk.main_quit())
         bar.pack_end(close, False, False, 0)
         root.pack_start(bar, False, False, 0)
 
+        # ---- centred action card ----------------------------------------
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content.get_style_context().add_class("pm-content")
+        content.set_halign(Gtk.Align.CENTER)
+        content.set_valign(Gtk.Align.CENTER)
+        content.set_hexpand(True)
+        content.set_vexpand(True)
+
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.get_style_context().add_class("box")
+        box.get_style_context().add_class("pm-box")
         box.set_halign(Gtk.Align.CENTER)
         box.set_valign(Gtk.Align.CENTER)
+        box.set_size_request(360, -1)
 
-        def mk(label, cls, cmd):
-            b = Gtk.Button(label=label)
-            b.get_style_context().add_class("item")
-            if cls:
-                b.get_style_context().add_class(cls)
-            b.set_size_request(320, -1)
-            b.connect("clicked", lambda *_: self.run(cmd))
-            return b
+        heading = Gtk.Label(label="Choose an action")
+        heading.get_style_context().add_class("label-sub")
+        heading.get_style_context().add_class("bold")
+        heading.set_xalign(0)
+        box.pack_start(heading, False, False, 0)
 
-        box.pack_start(mk("[ ] Matikan", "danger", ["systemctl", "poweroff"]), False, False, 0)
-        box.pack_start(mk("[ ] Mulai ulang", None, ["systemctl", "reboot"]), False, False, 0)
-        box.pack_start(mk("[ ] Batal", None, None), False, False, 0)
-        root.pack_start(box, True, True, 0)
+        box.pack_start(
+            self.mk_button("[-] Shut down", "btn-danger",
+                           ["systemctl", "poweroff"]),
+            False, False, 0)
+        box.pack_start(
+            self.mk_button("[+] Restart", None,
+                           ["systemctl", "reboot"]),
+            False, False, 0)
+        box.pack_start(
+            self.mk_button("[+] %s waybar"
+                           % ("Hide" if waybar_running() else "Show"),
+                           "pm-secondary", WAYBAR_TOGGLE),
+            False, False, 0)
+        box.pack_start(
+            self.mk_button("[+] Restart waybar", "pm-secondary",
+                           WAYBAR_RESTART),
+            False, False, 0)
+        box.pack_start(
+            self.mk_button("[+] Cancel", None, None),
+            False, False, 0)
+
+        content.pack_start(box, False, False, 0)
+        root.pack_start(content, True, True, 0)
+
+        self.fullscreen()
+
+    def mk_button(self, label, cls, cmd):
+        b = Gtk.Button(label=label)
+        ctx = b.get_style_context()
+        ctx.add_class("btn-item")
+        ctx.add_class("pm-btn")
+        if cls:
+            ctx.add_class(cls)
+        b.set_size_request(360, -1)
+        b.connect("clicked", lambda *_: self.run(cmd))
+        return b
 
     def run(self, cmd):
         if cmd:
@@ -101,13 +205,21 @@ class PowerMenu(Gtk.Window):
 
 
 def main():
+    # GTK3 on Wayland derives app_id from the program name; set it before the
+    # first window is created so waybar can find/kill this menu by app_id.
+    GLib.set_prgname("org.swaytablet.powermenu")
+    try:
+        Gdk.set_program_class("org.swaytablet.powermenu")
+    except Exception:
+        pass
     prov = Gtk.CssProvider()
-    prov.load_from_data(CSS)
-    screen = Gdk.Screen.get_default()
+    prov.load_from_data(CSS + EXTRA_CSS)
     Gtk.StyleContext.add_provider_for_screen(
-        screen, prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        Gdk.Screen.get_default(), prov,
+        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
     win = PowerMenu()
     win.show_all()
+    win.fullscreen()
     Gtk.main()
 
 

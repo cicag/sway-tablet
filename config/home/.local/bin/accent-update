@@ -29,7 +29,6 @@ window#waybar {
 #battery,
 #network,
 #custom-keyboard,
-#custom-rotate,
 #custom-panel,
 #custom-ws1,
 #custom-ws2 {

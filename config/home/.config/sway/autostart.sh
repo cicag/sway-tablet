@@ -6,6 +6,31 @@ export LIBVA_DRIVER_NAME=i965
 BIN="$HOME/.local/bin"
 CFG="$HOME/.config/sway"
 
+# Sway exports its Wayland socket only to its own children. DBus-activated and
+# systemd --user services (xdg-desktop-portal, portal-gtk, ...) do not inherit
+# it, so portal-gtk fails with "cannot open display" and portal activation
+# times out after 25s. GTK clients such as waybar then abort with
+# "Error calling StartServiceByName for org.freedesktop.portal.Desktop".
+# Keep both the DBus activation environment and the user manager in sync.
+export XDG_SESSION_TYPE=wayland
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-sway}"
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  dbus-update-activation-environment --systemd \
+    WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR \
+    DBUS_SESSION_BUS_ADDRESS >/dev/null 2>&1 || true
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user import-environment \
+    WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR \
+    >/dev/null 2>&1 || true
+  systemctl --user reset-failed xdg-desktop-portal \
+    xdg-desktop-portal-gtk >/dev/null 2>&1 || true
+  systemctl --user start xdg-desktop-portal-gtk \
+    xdg-desktop-portal >/dev/null 2>&1 || true
+fi
+
 # wallpaper (path stored in ~/.config/sway/wallpaper)
 if [ -f "$CFG/wallpaper" ] && [ -s "$CFG/wallpaper" ]; then
   swaybg -i "$(cat "$CFG/wallpaper")" -m fill &

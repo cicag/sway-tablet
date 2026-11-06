@@ -12,7 +12,6 @@
   ],
   "modules-right": [
     "custom/keyboard",
-    "custom/rotate",
     "custom/panel",
     "battery"
   ],
@@ -60,15 +59,10 @@
     "interval": 1,
     "on-click": "$HOME/.local/bin/waybar-kbd.sh"
   },
-  "custom/rotate": {
-    "format": "[Rot]",
-    "tooltip": false,
-    "on-click": "$HOME/.local/bin/waybar-rotate.sh"
-  },
   "custom/panel": {
     "format": "[{}]",
     "tooltip": false,
-    "exec": "$HOME/.local/bin/waybar-app-state.sh org.swaytablet.controlpanel Set",
+    "exec": "$HOME/.local/bin/waybar-app-state.sh org.swaytablet.controlpanel Settings",
     "return-type": "json",
     "interval": 1,
     "on-click": "$HOME/.local/bin/waybar-app-toggle.sh org.swaytablet.controlpanel $HOME/.local/bin/controlpanel"
