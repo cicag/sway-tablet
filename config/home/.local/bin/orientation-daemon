@@ -1,0 +1,188 @@
+#!/bin/sh
+# orientation-daemon - auto-rotate the sway output based on an accelerometer.
+#
+# Reads raw accelerometer values from a Linux IIO sensor via sysfs once per
+# second, applies ORIENTATION_OFFSET to correct for accelerometer mounting,
+# and calls `swaymsg output <name> transform <angle>` when the orientation
+# changes. Hysteresis is intentionally disabled — the transform is applied
+# as soon as the reading differs from the last applied transform.
+#
+# Environment variables (all optional):
+#   SENSOR_PATH       IIO device directory (default: auto-detect first
+#                     accelerometer under /sys/bus/iio/devices/)
+#   OUTPUT_NAME       Sway output name (default: auto-detect first non-headless)
+#   POLL_INTERVAL_MS  Polling interval in milliseconds (default: 1000)
+#   LOCK_STATE_FILE   File that, when present, means "locked" — the daemon
+#                     exits immediately and on each loop iteration
+#                     (default: ~/.config/swaytablet/orientation-locked)
+#   ORIENTATION_OFFSET  Extra degrees (0/90/180/270) added to the computed
+#                       transform, to correct for accelerometer mounting
+#                       orientation in the device (default: 0)
+#
+# Exit status: 0 on clean exit (locked or killed), nonzero on error.
+
+set -u
+
+SENSOR_PATH="${SENSOR_PATH:-}"
+OUTPUT_NAME="${OUTPUT_NAME:-}"
+POLL_INTERVAL_MS="${POLL_INTERVAL_MS:-1000}"
+LOCK_STATE_FILE="${LOCK_STATE_FILE:-$HOME/.config/swaytablet/orientation-locked}"
+ORIENTATION_OFFSET="${ORIENTATION_OFFSET:-0}"
+
+LOG_TAG="orientation-daemon"
+
+log() {
+    printf '%s %s\n' "$LOG_TAG" "$*" >&2
+}
+
+# --- find the accelerometer sensor path -------------------------------------
+find_sensor_path() {
+    for d in /sys/bus/iio/devices/iio:device*; do
+        [ -d "$d" ] || continue
+        if [ -r "$d/in_accel_x_raw" ] && [ -r "$d/in_accel_y_raw" ] \
+           && [ -r "$d/in_accel_z_raw" ]; then
+            printf '%s' "$d"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [ -z "$SENSOR_PATH" ]; then
+    SENSOR_PATH="$(find_sensor_path)" || {
+        log "no accelerometer sensor found (in_accel_x_raw not readable)"
+        exit 1
+    }
+fi
+
+if [ ! -r "$SENSOR_PATH/in_accel_x_raw" ] \
+   || [ ! -r "$SENSOR_PATH/in_accel_y_raw" ] \
+   || [ ! -r "$SENSOR_PATH/in_accel_z_raw" ]; then
+    log "sensor not readable at $SENSOR_PATH"
+    exit 1
+fi
+
+# --- find the sway output ----------------------------------------------------
+find_output_name() {
+    swaymsg -t get_outputs 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for o in data:
+    if not o.get("headless") and o.get("name"):
+        print(o["name"])
+        sys.exit(0)
+sys.exit(1)
+' 2>/dev/null
+}
+
+if [ -z "$OUTPUT_NAME" ]; then
+    OUTPUT_NAME="$(find_output_name)" || {
+        log "no non-headless sway output found"
+        exit 1
+    }
+fi
+
+log "sensor=$SENSOR_PATH output=$OUTPUT_NAME interval=${POLL_INTERVAL_MS}ms offset=${ORIENTATION_OFFSET}deg"
+
+# --- helpers -----------------------------------------------------------------
+read_raw() {
+    cat "$1" 2>/dev/null || printf '0'
+}
+
+# Compute base transform (0/90/180/270) from raw accel values.
+#   Find which axis points most toward gravity (down):
+#     x<0 -> normal(0),  x>0 -> 180
+#     y<0 -> 270,        y>0 -> 90
+#     z<0 -> normal(0),  z>0 -> 180
+compute_transform() {
+    local x y z ax ay az
+    x="$(read_raw "$SENSOR_PATH/in_accel_x_raw")"
+    y="$(read_raw "$SENSOR_PATH/in_accel_y_raw")"
+    z="$(read_raw "$SENSOR_PATH/in_accel_z_raw")"
+
+    case "$x" in *[!0-9-]*|'') x=0 ;; esac
+    case "$y" in *[!0-9-]*|'') y=0 ;; esac
+    case "$z" in *[!0-9-]*|'') z=0 ;; esac
+
+    ax="${x#-}"; ay="${y#-}"; az="${z#-}"
+
+    if [ "$az" -ge "$ax" ] && [ "$az" -ge "$ay" ]; then
+        # Z dominates
+        [ "$z" -gt 0 ] && echo 180 || echo 0
+    elif [ "$ax" -ge "$ay" ]; then
+        # X dominates
+        [ "$x" -gt 0 ] && echo 90 || echo 270
+    else
+        # Y dominates
+        [ "$y" -gt 0 ] && echo 180 || echo 0
+    fi
+}
+
+# Get current sway transform for the output.
+current_transform() {
+    swaymsg -t get_outputs 2>/dev/null \
+        | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print('normal')
+    sys.exit(0)
+for o in data:
+    if o.get('name') == '$OUTPUT_NAME':
+        print(o.get('transform', 'normal'))
+        sys.exit(0)
+print('normal')
+" 2>/dev/null || echo normal
+}
+
+name_for() {
+    case "$1" in
+        0)   echo normal ;;
+        90)  echo 90 ;;
+        180) echo 180 ;;
+        270) echo 270 ;;
+        *)   echo normal ;;
+    esac
+}
+
+# --- main loop ---------------------------------------------------------------
+LAST_TRANSFORM=""
+
+apply_transform() {
+    local new_deg="$1"
+    local new_name
+    new_name="$(name_for "$new_deg")"
+    if [ "$new_name" = "$LAST_TRANSFORM" ]; then
+        return 0
+    fi
+    swaymsg "output $OUTPUT_NAME transform $new_name" >/dev/null 2>&1 || true
+    LAST_TRANSFORM="$new_name"
+    log "transform -> $new_name ($new_deg deg)"
+}
+
+# Initial sync
+LAST_TRANSFORM="$(current_transform)"
+log "initial transform=$LAST_TRANSFORM"
+
+sleep_secs=$(( POLL_INTERVAL_MS / 1000 ))
+[ "$sleep_secs" -lt 1 ] && sleep_secs=1
+
+while true; do
+    # Exit if locked
+    if [ -e "$LOCK_STATE_FILE" ]; then
+        log "locked, exiting"
+        exit 0
+    fi
+
+    # Wrap each iteration so a transient error never kills the daemon
+    raw_deg="$(compute_transform 2>/dev/null || echo 0)"
+    deg=$(( (raw_deg + ORIENTATION_OFFSET) % 360 ))
+    apply_transform "$deg" 2>/dev/null || true
+
+    sleep "$sleep_secs" 2>/dev/null || sleep 1
+done

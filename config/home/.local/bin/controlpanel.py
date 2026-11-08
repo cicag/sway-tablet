@@ -759,6 +759,25 @@ class Panel(Gtk.Window):
         self.zt_error = ""
         self.bt_selected = None
         self._modal_overlay = None
+        # Orientation lock state: True = screen orientation locked (no
+        # auto-rotation), False = auto-rotate via orientation-daemon.
+        self.orientation_locked = False
+        self.orientation_daemon_pid = None
+        self.orientation_lock_file = os.path.join(
+            os.path.expanduser("~"), ".config", "swaytablet",
+            "orientation-locked")
+        # Restore persisted lock state
+        try:
+            self.orientation_locked = os.path.exists(self.orientation_lock_file)
+        except Exception:
+            self.orientation_locked = False
+        # Orientation daemon configuration (read from environment; set per
+        # device in /etc/environment or your session startup).
+        self.orient_sensor_path = os.environ.get("SENSOR_PATH")
+        self.orient_output_name = os.environ.get("OUTPUT_NAME")
+        self.orient_offset = os.environ.get("ORIENTATION_OFFSET")
+        self.orient_poll = os.environ.get("POLL_INTERVAL_MS")
+        self.orient_ema = os.environ.get("EMA_ALPHA")
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                        spacing=int(8 * self.scale))
         self.root = root
@@ -823,6 +842,7 @@ class Panel(Gtk.Window):
         GLib.timeout_add_seconds(1, self.poll_volume)
         GLib.timeout_add_seconds(2, self.refresh_streams)
         GLib.timeout_add_seconds(5, self._zt_tick)
+        GLib.timeout_add_seconds(2, self._orientation_tick)
 
     # ---- generic card / button helpers ----------------------------------
     def card_head(self, text, actions=None):
@@ -1134,8 +1154,8 @@ class Panel(Gtk.Window):
         bar.get_style_context().add_class("box")
         bar.get_style_context().add_class("action-box")
 
-        self.rot_btn, self.rot_mark, self.rot_sub = self.action_tile(
-            "[+]", "Rotate", "screen", self.do_rotate)
+        self.orient_btn, self.orient_mark, self.orient_sub = self.action_tile(
+            "[+]", "Orientation", "unlocked", self.do_orientation_lock)
         self.pwr_btn, _m, _s = self.action_tile(
             "[-]", "Shut down", "power", lambda: power_action("off"))
         self.rst_btn, _m, _s = self.action_tile(
@@ -1143,7 +1163,7 @@ class Panel(Gtk.Window):
         self.zt_btn, self.zt_mark, self.zt_sub = self.action_tile(
             "[+]", "ZeroTier", "checking...", self.do_zerotier)
 
-        for t in (self.rot_btn, self.pwr_btn, self.rst_btn, self.zt_btn):
+        for t in (self.orient_btn, self.pwr_btn, self.rst_btn, self.zt_btn):
             t.set_hexpand(True)
             bar.pack_start(t, True, True, 0)
         return bar
@@ -1152,17 +1172,25 @@ class Panel(Gtk.Window):
     def first_refresh(self):
         for fn in (self.refresh_wifi, self.refresh_bt, self.refresh_sinks,
                    self.refresh_wall, self.refresh_streams,
-                   self.refresh_rotate, self.refresh_zerotier):
+                   self.refresh_orientation, self.refresh_zerotier):
             try:
                 fn()
             except Exception as e:
                 plog("first_refresh %s err %r" % (fn.__name__, e))
         return False
 
-    def refresh_rotate(self):
-        _name, cur = sway_output()
+    def refresh_orientation(self):
+        """Update the orientation lock tile to reflect current state."""
         deg = {"normal": "0°", "90": "90°", "180": "180°", "270": "270°"}
-        self.rot_sub.set_text("screen %s" % deg.get(cur, cur or "-"))
+        _name, cur = sway_output()
+        if self.orientation_locked:
+            self.orient_mark.set_text("[-]")
+            self.orient_btn.get_style_context().add_class("on")
+            self.orient_sub.set_text("locked (%s)" % deg.get(cur, cur or "-"))
+        else:
+            self.orient_mark.set_text("[+]")
+            self.orient_btn.get_style_context().remove_class("on")
+            self.orient_sub.set_text("auto (%s)" % deg.get(cur, cur or "-"))
         return False
 
     def refresh_zerotier(self):
@@ -1181,10 +1209,104 @@ class Panel(Gtk.Window):
         self.refresh_zerotier()
         return True
 
-    def do_rotate(self):
-        nxt = rotate_output()
-        deg = {"normal": "0°", "90": "90°", "180": "180°", "270": "270°"}
-        self.rot_sub.set_text("screen %s" % deg.get(nxt, nxt))
+    def do_orientation_lock(self):
+        """Toggle orientation lock on/off and start/stop the daemon."""
+        self.orientation_locked = not self.orientation_locked
+        self._write_lock_state(self.orientation_locked)
+        self.refresh_orientation()
+
+        if self.orientation_locked:
+            self._stop_orientation_daemon()
+        else:
+            self._start_orientation_daemon()
+        return False
+
+    def _write_lock_state(self, locked):
+        """Create or remove the lock state file."""
+        try:
+            os.makedirs(os.path.dirname(self.orientation_lock_file),
+                        exist_ok=True)
+        except Exception:
+            pass
+        if locked:
+            try:
+                with open(self.orientation_lock_file, "w") as f:
+                    f.write("locked\n")
+            except Exception as e:
+                plog("orientation lock write err %r" % e)
+        else:
+            try:
+                if os.path.exists(self.orientation_lock_file):
+                    os.remove(self.orientation_lock_file)
+            except Exception as e:
+                plog("orientation unlock remove err %r" % e)
+
+    def _orientation_daemon_path(self):
+        """Locate the orientation-daemon script."""
+        candidates = [
+            os.path.join(os.path.expanduser("~"), ".local", "bin",
+                         "orientation-daemon"),
+            "/usr/local/bin/orientation-daemon",
+            "/usr/bin/orientation-daemon",
+        ]
+        for c in candidates:
+            if os.path.exists(c) and os.access(c, os.X_OK):
+                return c
+        return None
+
+    def _start_orientation_daemon(self):
+        """Start orientation-daemon in the background if not locked."""
+        if self.orientation_locked:
+            return
+        if self.orientation_daemon_pid is not None:
+            # already running
+            try:
+                os.kill(self.orientation_daemon_pid, 0)
+                return
+            except OSError:
+                self.orientation_daemon_pid = None
+        daemon = self._orientation_daemon_path()
+        if daemon is None:
+            plog("orientation-daemon not found in $PATH or ~/.local/bin")
+            return
+        try:
+            env = dict(os.environ)
+            env["SENSOR_PATH"] = self.orient_sensor_path or ""
+            env["OUTPUT_NAME"] = self.orient_output_name or ""
+            env["ORIENTATION_OFFSET"] = self.orient_offset or ""
+            env["POLL_INTERVAL_MS"] = self.orient_poll or ""
+            env["EMA_ALPHA"] = self.orient_ema or ""
+            proc = subprocess.Popen(
+                [daemon],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env)
+            self.orientation_daemon_pid = proc.pid
+            plog("orientation-daemon started pid=%s" % proc.pid)
+        except Exception as e:
+            plog("orientation-daemon start err %r" % e)
+
+    def _stop_orientation_daemon(self):
+        """Stop the orientation daemon if running."""
+        if self.orientation_daemon_pid is not None:
+            try:
+                os.killpg(self.orientation_daemon_pid, 9)
+            except OSError:
+                pass
+            self.orientation_daemon_pid = None
+        # Also kill any orphaned orientation-daemon processes
+        run(["pkill", "-f", "orientation-daemon"], timeout=5)
+
+    def _orientation_tick(self):
+        """Periodic check: refresh UI and (re)start daemon if unlocked."""
+        try:
+            self.refresh_orientation()
+        except Exception:
+            pass
+        if not self.orientation_locked:
+            self._start_orientation_daemon()
+        return True
 
     def do_zerotier(self):
         self.zt_sub.set_text("working...")

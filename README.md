@@ -1,13 +1,11 @@
 # sway-tablet
-Sway customization for touchcreen only devices.
-=======
 
 Touch-first **sway** desktop for small tablets — dotfiles, helper scripts and the
 waybar/on-screen-keyboard setup.
 
 Originally written for the
 [Wearness LP-W841](https://github.com/cicag/lp-w841_linux) (Intel Atom Z3735,
-1 GB RAM, 800x1280 portrait), but the configuration is **device agnostic**:
+1 GB RAM, 800x1280), but the configuration is **device agnostic**:
 paths are relative to `$HOME`, and the hardware-specific parts (touchscreen
 mapping, backlight device, output name) are auto-detected or left commented
 out.
@@ -48,9 +46,7 @@ sway
 
 This repo does **not** decide how the session starts. If you want the machine
 to boot straight into sway (no display manager), see
-[docs/01-desktop-sway.md](docs/01-desktop-sway.md#starting-a-session) — it
-shows the getty autologin drop-in plus three ways to launch sway from it
-(shell profile, systemd user unit, display manager).
+[docs/01-desktop-sway.md](docs/01-desktop-sway.md#starting-a-session)
 
 ### Requirements
 
@@ -86,12 +82,13 @@ screenshots/         screenshots of the running desktop
 |---|---|
 | `accent-update` | derives an accent color from the wallpaper, rewrites `accent.conf` and the waybar stylesheet |
 | `appmenu` | fullscreen GTK3 application grid, launched from the waybar |
-| `controlpanel` | fullscreen GTK3 settings panel: volume + output devices with merged app volume, brightness, WiFi (scan/connect/disconnect/forget), Bluetooth (scan/connect/disconnect/forget/battery), centered wallpaper carousel (max 7 thumbnails portrait / 11 landscape, stretched to span the row and looped when there are fewer), plus a fixed bar for rotate/shutdown/restart/ZeroTier |
+| `controlpanel` | fullscreen GTK3 settings panel |
+| `orientation-daemon` | background accelerometer polling daemon that auto-rotates the sway output when orientation is unlocked (configured via env vars |
 | `powerkeyd` | power button: short press toggles the screen, long press shows the power dialog |
 | `waybar-app-state.sh` | reports `on`/`off` for a GTK `app_id` |
 | `waybar-app-toggle.sh` | launches an app, or kills it if already running |
 | `waybar-kbd.sh` / `waybar-kbd-state.sh` | toggles the on-screen keyboard and reports its state |
-| `waybar-rotate.sh` | cycles the output transform (manual use; the control panel owns the waybar-facing rotate tile) |
+| `waybar-rotate.sh` | cycles the output transform (manual override; orientation lock in the control panel owns auto-rotation) |
 | `waybar-ws.sh` | workspace buttons for the waybar |
 
 ## Device-specific bits
@@ -105,6 +102,7 @@ Kept out of the shipped configuration on purpose — enable them per machine:
 | Power key device / output | `powerkeyd` | auto-detected; `POWERKEY_DEVICE` / `POWERKEY_OUTPUT` override |
 | On-screen keyboard size | `waybar-kbd.sh` | `WVKBD_HEIGHT` / `WVKBD_LAYOUT` |
 | Renderer | session start | `WLR_RENDERER=vulkan` or `gles2` |
+| Orientation sensor | `orientation-daemon` env vars | `SENSOR_PATH`, `OUTPUT_NAME`, `POLL_INTERVAL_MS`, `EMA_ALPHA`, `ORIENTATION_OFFSET` — set per machine |
 
 ## Documentation
 
@@ -113,6 +111,7 @@ Kept out of the shipped configuration on purpose — enable them per machine:
 | [docs/01-desktop-sway.md](docs/01-desktop-sway.md) | Starting a session, sway config, autostart, theme, panel, touch apps, power key |
 | [docs/02-troubleshooting.md](docs/02-troubleshooting.md) | Power key shutting down immediately (logind), waybar missing after login (portal activation), on-screen keyboard hidden behind fullscreen windows (wvkbd < 0.16), control panel not appearing (CSS placeholder mismatch) |
 | [docs/03-appimage-appmenu.md](docs/03-appimage-appmenu.md) | Registering AppImages from `~/Applications` as app-menu entries via `.desktop` files, icons, examples and troubleshooting |
+| [docs/04-orientation-lock.md](docs/04-orientation-lock.md) | Orientation lock: auto-rotate based on accelerometer when unlocked, hold orientation when locked |
 
 ## Screenshots
 

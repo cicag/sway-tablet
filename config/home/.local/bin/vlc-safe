@@ -6,7 +6,10 @@ set -eu
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
-# Keep existing QT_QPA_PLATFORM if set; don't force it (can break Qt GUI on some setups).
+# VLC's Qt GUI does not initialize on native Wayland on this hardware
+# (Bay Trail/i965). Force XWayland via xcb so VLC gets a real Sway window.
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+export DISPLAY="${DISPLAY:-:0}"
 if [ -z "${SWAYSOCK:-}" ]; then
   SWAYSOCK="$(ls -t "$XDG_RUNTIME_DIR"/sway-ipc.*.sock 2>/dev/null | head -1 || true)"
   export SWAYSOCK
