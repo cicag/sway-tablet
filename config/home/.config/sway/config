@@ -30,4 +30,13 @@ smart_borders off
 
 default_border pixel 1
 default_floating_border pixel 1
+
+# Tablet panels: avoid compositor fullscreen (keeps top-layer/exclusive waybar visible).
+# Float above the work area; apps size themselves to the monitor minus bar.
+for_window [app_id="org.swaytablet.appmenu"] floating enable, border pixel 0, move absolute position 0 0
+for_window [app_id="org.swaytablet.controlpanel"] floating enable, border pixel 0, move absolute position 0 0
+
+# Power menu: must appear above fullscreen apps.
+for_window [app_id="org.swaytablet.powermenu"] fullscreen enable, border pixel 0
+
 include $HOME/.config/sway/accent.conf

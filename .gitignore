@@ -1,1 +1,5 @@
 DESIGN.md
+__pycache__/
+*.pyc
+*.pyo
+

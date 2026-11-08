@@ -1,5 +1,6 @@
 {
-  "layer": "overlay",
+  "layer": "top",
+  "exclusive": true,
   "position": "bottom",
   "height": 48,
   "modules-left": [
@@ -62,7 +63,7 @@
   "custom/panel": {
     "format": "[{}]",
     "tooltip": false,
-    "exec": "$HOME/.local/bin/waybar-app-state.sh org.swaytablet.controlpanel Settings",
+    "exec": "$HOME/.local/bin/waybar-app-state.sh org.swaytablet.controlpanel Set",
     "return-type": "json",
     "interval": 1,
     "on-click": "$HOME/.local/bin/waybar-app-toggle.sh org.swaytablet.controlpanel $HOME/.local/bin/controlpanel"
