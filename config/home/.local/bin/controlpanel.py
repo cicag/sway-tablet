@@ -140,6 +140,17 @@ def ui_scale():
         return 1.25
 
 
+def monitor_size():
+    """Current logical size of the primary monitor (follows rotation)."""
+    try:
+        disp = Gdk.Display.get_default()
+        mon = disp.get_primary_monitor() or disp.get_monitor(0)
+        g = mon.get_geometry()
+        return g.width, g.height
+    except Exception:
+        return 0, 0
+
+
 def make_css(scale):
     """Scale-aware overlay loaded on top of gtk-theme.css."""
     def p(x):
@@ -628,6 +639,7 @@ class Panel(Gtk.Window):
         self.wall_btns = {}
         self.wall_avail = 0
         self._wall_busy = False
+        self._rot_pending = False
         self.zt_error = ""
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
@@ -679,6 +691,13 @@ class Panel(Gtk.Window):
         root.pack_end(self.action_bar(), False, False, 0)
 
         self.guard = False
+        try:
+            disp = Gdk.Display.get_default()
+            mon = disp.get_primary_monitor() or disp.get_monitor(0)
+            if mon is not None:
+                mon.connect("notify::geometry", self.on_monitor_geometry)
+        except Exception:
+            pass
         self.fullscreen()
         GLib.idle_add(self.first_refresh)
         GLib.timeout_add_seconds(5, self.refresh_sinks)
@@ -1446,12 +1465,21 @@ class Panel(Gtk.Window):
     def _wall_available(self):
         """Width the strip may use, derived from the window (stable)."""
         pw = self.get_allocated_width()
+        # While rotating, the window allocation can briefly (or permanently,
+        # until the minimum width shrinks) stay at the old landscape size.
+        # Never let the carousel size itself from more than the monitor.
+        mw, _mh = monitor_size()
+        if mw > 50:
+            pw = mw if pw <= 50 else min(pw, mw)
         if pw <= 50:
             return self._wall_avail_fallback()
         s = self.scale
-        # root margins + card margins + the card's hairline border
+        # root margins + card margins + the card's hairline border, plus a
+        # small safety allowance so the window's minimum width never exceeds
+        # the portrait screen (otherwise the right edge is clipped after a
+        # rotation back from landscape).
         inner = (pw - 2 * int(round(9 * s)) - 2 * int(round(8 * s))
-                 - 2 * int(round(1 * s)))
+                 - 2 * int(round(1 * s)) - int(round(12 * s)))
         pw_btn = self.wall_prev.get_allocated_width() if self.wall_prev else 1
         nw_btn = self.wall_next.get_allocated_width() if self.wall_next else 1
         sp = self.wall_row.get_spacing() if self.wall_row else 0
@@ -1462,6 +1490,12 @@ class Panel(Gtk.Window):
 
     def wall_slot_cap(self):
         """Hard limit on visible thumbnails: 7 portrait, 11 landscape."""
+        # Monitor geometry follows rotation immediately; the window
+        # allocation lags behind (and can stay at the old size), so it is
+        # not a reliable orientation source.
+        w, h = monitor_size()
+        if w > 50 and h > 50:
+            return 7 if h >= w else 11
         try:
             w = self.get_allocated_width()
             h = self.get_allocated_height()
@@ -1470,6 +1504,41 @@ class Panel(Gtk.Window):
         except Exception:
             pass
         return 7 if self.scale >= 1.1 else 11
+
+    def on_monitor_geometry(self, *_a):
+        """Rebuild the carousel for the new orientation after a rotation.
+
+        The old carousel keeps a large minimum width alive, which can stop
+        the fullscreen window from shrinking back to portrait.  Clear it
+        first, then rebuild with the new (monitor-based) geometry.
+        """
+        if self._rot_pending:
+            return
+        self._rot_pending = True
+        self.wall_avail = 0
+        self._clear(self.wall_strip)
+        GLib.idle_add(self._rotation_settle)
+
+    def _rotation_settle(self):
+        self._rot_pending = False
+        if self.wall_pics:
+            self._wall_busy = True
+            try:
+                self.refresh_wall()
+            finally:
+                self._wall_busy = False
+        self.wall_strip.show_all()
+        self.queue_resize()
+        # The compositor only reconfigures the fullscreen surface when the
+        # window itself asks for the new size; GTK keeps the old, wider size
+        # even after the carousel minimum has shrunk.
+        mw, mh = monitor_size()
+        if mw > 50 and mh > 50 and (mw, mh) != self.get_size():
+            # A plain resize() is ignored while fullscreen, so drop out and
+            # back in to make the compositor configure the new size.
+            self.unfullscreen()
+            self.fullscreen()
+        return False
 
     def on_wall_alloc(self, _w, alloc):
         """Rebuild the carousel when the available width changes."""

@@ -70,6 +70,9 @@ EXTRA_CSS = b"""
 }
 """
 
+# Width of the action card and its full-width buttons.
+CARD_WIDTH = 480
+
 # Restart the bar in the background. waybar is a layer-shell client, so it has
 # to keep the session's WAYLAND_DISPLAY / DBUS env (inherited from powermenu).
 WAYBAR_RESTART = [
@@ -144,7 +147,7 @@ class PowerMenu(Gtk.Window):
         box.get_style_context().add_class("pm-box")
         box.set_halign(Gtk.Align.CENTER)
         box.set_valign(Gtk.Align.CENTER)
-        box.set_size_request(360, -1)
+        box.set_size_request(CARD_WIDTH, -1)
 
         heading = Gtk.Label(label="Choose an action")
         heading.get_style_context().add_class("label-sub")
@@ -160,15 +163,19 @@ class PowerMenu(Gtk.Window):
             self.mk_button("[+] Restart", None,
                            ["systemctl", "reboot"]),
             False, False, 0)
-        box.pack_start(
+        waybar_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        waybar_row.set_homogeneous(True)
+        waybar_row.set_hexpand(True)
+        waybar_row.pack_start(
             self.mk_button("[+] %s waybar"
                            % ("Hide" if waybar_running() else "Show"),
-                           "pm-secondary", WAYBAR_TOGGLE),
-            False, False, 0)
-        box.pack_start(
+                           "pm-secondary", WAYBAR_TOGGLE, width=-1),
+            True, True, 0)
+        waybar_row.pack_start(
             self.mk_button("[+] Restart waybar", "pm-secondary",
-                           WAYBAR_RESTART),
-            False, False, 0)
+                           WAYBAR_RESTART, width=-1),
+            True, True, 0)
+        box.pack_start(waybar_row, False, False, 0)
         box.pack_start(
             self.mk_button("[+] Cancel", None, None),
             False, False, 0)
@@ -178,14 +185,14 @@ class PowerMenu(Gtk.Window):
 
         self.fullscreen()
 
-    def mk_button(self, label, cls, cmd):
+    def mk_button(self, label, cls, cmd, width=CARD_WIDTH):
         b = Gtk.Button(label=label)
         ctx = b.get_style_context()
         ctx.add_class("btn-item")
         ctx.add_class("pm-btn")
         if cls:
             ctx.add_class(cls)
-        b.set_size_request(360, -1)
+        b.set_size_request(width, -1)
         b.connect("clicked", lambda *_: self.run(cmd))
         return b
 

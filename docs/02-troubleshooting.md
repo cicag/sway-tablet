@@ -69,6 +69,36 @@ systemctl --user reset-failed xdg-desktop-portal xdg-desktop-portal-gtk
 systemctl --user start xdg-desktop-portal-gtk xdg-desktop-portal
 ```
 
+## On-screen keyboard is hidden behind fullscreen windows
+
+**Cause:** `wvkbd` 0.15 (packaged in Debian 13/trixie) puts its
+layer-shell surface on the **top** layer. Sway renders the top layer *below*
+fullscreen windows, so a fullscreen control panel covers it.
+
+**Check:**
+
+```sh
+command -v wvkbd-mobintl       # /usr/local/bin/... = local build wins
+dpkg -l wvkbd                  # may still say 0.15 for the distro package
+```
+
+(`wvkbd-mobintl -h` does not print a version string, so use the path instead.)
+
+**Fix:** use `wvkbd` **0.16 or newer**
+
+```sh
+sudo apt install build-essential pkg-config libwayland-dev \
+    libxkbcommon-dev libpango1.0-dev libcairo2-dev
+git clone --depth 1 --branch v0.16 https://github.com/jjsullivan5196/wvkbd
+cd wvkbd
+make LAYOUT=mobintl wvkbd-mobintl
+strip wvkbd-mobintl
+sudo install -m755 wvkbd-mobintl /usr/local/bin/wvkbd-mobintl
+```
+
+(`make LAYOUT=mobintl wvkbd-mobintl` builds only the binary and skips the
+man page, which would otherwise require `scdoc`.)
+
 ## Waybar covers the bottom of the control panel
 
 Waybar is a layer-shell client, so a fullscreen GTK window does **not** cover
@@ -81,8 +111,3 @@ it: the bar keeps painting over the bottom `height` pixels configured in
 WAYBAR_HEIGHT = int(os.environ.get("WAYBAR_HEIGHT", "48"))
 root.set_margin_bottom(WAYBAR_HEIGHT + BOTTOM_GAP)
 ```
-
-The scrolling body is clipped above the fixed action bar, and the action bar
-stays above the reserved gap, so nothing scrolls under waybar. If you change
-the waybar height, start the panel with `WAYBAR_HEIGHT=<new height>` (or update
-the default).

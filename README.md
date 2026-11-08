@@ -12,11 +12,6 @@ paths are relative to `$HOME`, and the hardware-specific parts (touchscreen
 mapping, backlight device, output name) are auto-detected or left commented
 out.
 
-This repo contains **only the desktop layer**. The device-level work (Debian
-install, touchscreen firmware and calibration, backlight, power/thermal tuning,
-kernel notes, Bluetooth gamepad) lives in the companion repo
-**[`cicag/lp-w841_linux`](https://github.com/cicag/lp-w841_linux)**.
-
 | | |
 |---|---|
 | Window manager | sway |
@@ -61,7 +56,11 @@ shows the getty autologin drop-in plus three ways to launch sway from it
 
 Installed on the device (not provided by this repo):
 
-- `sway`, `waybar`, `swaybg`, `wvkbd-mobintl`, `swaynag`
+- `sway`, `waybar`, `swaybg`, `swaynag`
+- `wvkbd-mobintl` **>= 0.16** (0.15 uses the top layer and is hidden
+  behind fullscreen windows, so the keyboard cannot type into the control
+  panel's password dialog; see
+  [docs/02-troubleshooting.md](docs/02-troubleshooting.md#on-screen-keyboard-is-hidden-behind-fullscreen-windows))
 - `python3` + `PyGObject` (GTK3) for `appmenu` and `controlpanel`
 - `wpctl`/`pipewire` (PipeWire) for audio, `nmcli` for WiFi, `bluetoothctl`
   for Bluetooth
@@ -80,8 +79,6 @@ config/               exact copies of the on-device files
 docs/                desktop documentation
 screenshots/         screenshots of the running desktop
 ```
-
-> Files under `config/` mirror the on-device absolute paths.
 
 ## Scripts
 
@@ -114,7 +111,7 @@ Kept out of the shipped configuration on purpose — enable them per machine:
 | Doc | Contents |
 |---|---|
 | [docs/01-desktop-sway.md](docs/01-desktop-sway.md) | Starting a session, sway config, autostart, theme, panel, touch apps, power key |
-| [docs/02-troubleshooting.md](docs/02-troubleshooting.md) | Power key shutting down immediately (logind), waybar missing after login (portal activation), control panel not appearing (CSS placeholder mismatch) |
+| [docs/02-troubleshooting.md](docs/02-troubleshooting.md) | Power key shutting down immediately (logind), waybar missing after login (portal activation), on-screen keyboard hidden behind fullscreen windows (wvkbd < 0.16), control panel not appearing (CSS placeholder mismatch) |
 | [docs/03-appimage-appmenu.md](docs/03-appimage-appmenu.md) | Registering AppImages from `~/Applications` as app-menu entries via `.desktop` files, icons, examples and troubleshooting |
 
 ## Screenshots
