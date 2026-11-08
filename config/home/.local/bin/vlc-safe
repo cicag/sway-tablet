@@ -1,0 +1,52 @@
+#!/bin/sh
+# Launch VLC while keeping single-instance enabled, but clear stale/headless
+# instances that have no Sway window (they block new launches via handoff).
+
+set -eu
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
+# Keep existing QT_QPA_PLATFORM if set; don't force it (can break Qt GUI on some setups).
+if [ -z "${SWAYSOCK:-}" ]; then
+  SWAYSOCK="$(ls -t "$XDG_RUNTIME_DIR"/sway-ipc.*.sock 2>/dev/null | head -1 || true)"
+  export SWAYSOCK
+fi
+
+has_vlc_window() {
+  # Check for a real VLC surface in the Sway tree (Wayland app_id or XWayland class).
+  swaymsg -t get_tree 2>/dev/null | python3 -c '
+import json, sys
+try:
+    root = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+
+def walk(n):
+    app = (n.get("app_id") or "").lower()
+    props = n.get("window_properties") or {}
+    cls = str(props.get("class") or "").lower()
+    inst = str(props.get("instance") or "").lower()
+    name = (n.get("name") or "").lower()
+    if app == "vlc" or cls == "vlc" or inst == "vlc" or "vlc media player" in name:
+        print("yes")
+        raise SystemExit(0)
+    for c in n.get("nodes", []) + n.get("floating_nodes", []):
+        walk(c)
+
+walk(root)
+raise SystemExit(1)
+' >/dev/null 2>&1
+}
+
+if pgrep -x vlc >/dev/null 2>&1 || pgrep -x vlc.bin >/dev/null 2>&1; then
+  if ! has_vlc_window; then
+    # Stale/headless VLC blocks single-instance handoff; clear it.
+    pkill -x vlc >/dev/null 2>&1 || true
+    pkill -x vlc.bin >/dev/null 2>&1 || true
+    sleep 1
+    pkill -9 -x vlc >/dev/null 2>&1 || true
+    pkill -9 -x vlc.bin >/dev/null 2>&1 || true
+  fi
+fi
+
+exec /usr/bin/vlc "$@"

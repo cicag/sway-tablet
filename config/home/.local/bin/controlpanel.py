@@ -184,6 +184,7 @@ button.action-tile {
 .tile-mark { font-size: %(tm)dpx; font-weight: 700; color: #cdd6f4; }
 .tile-name { font-size: %(tn)dpx; font-weight: 700; color: #cdd6f4; }
 .tile-sub  { font-size: %(ts)dpx; color: #a6adc8; }
+.tile-icon { font-size: %(ti)dpx; font-weight: 700; color: #ffffff; }
 .net-row {
   border-bottom: 1px solid rgba(205, 214, 244, 0.08);
   padding-bottom: %(netpad)dpx;
@@ -200,7 +201,8 @@ button.action-tile {
         "bmf": p(12), "bmpy": p(5), "bmpx": p(9),
         "atpad": p(10), "atmin": p(52),
         "tm": p(15), "tn": p(14), "ts": p(11),
-        "netpad": p(6), "abpad": p(8), "nm": p(11),
+        "netpad": p(6), "abpad": p(8), "nm": p(11), "ti": p(22),
+        "accent": ACCENT,
     })
 
 
@@ -424,20 +426,82 @@ def wifi_saved():
     return conns
 
 
-def bt_battery(mac):
-    """Battery percentage reported by BlueZ (Battery1), or None."""
+def bt_discoverable():
+    for line in run(["bluetoothctl", "show"]).splitlines():
+        if "Discoverable:" in line:
+            return line.split(":", 1)[1].strip().lower() == "yes"
+    return False
+
+
+# Device-type icon (emoji badge) from BlueZ icon/name.
+BT_ICON_MAP = {
+    "audio-card": "🔊", "audio-speakers": "🔊",
+    "audio-headset": "🎧", "headset": "🎧",
+    "headphones": "🎧", "headphone": "🎧",
+    "phone": "📱", "mobile-phone": "📱", "smartphone": "📱",
+    "watch": "⌚", "smartwatch": "⌚",
+    "input-gaming": "🎮", "input-joystick": "🎮",
+    "gamepad": "🎮",
+    "input-keyboard": "⌨️", "keyboard": "⌨️",
+    "input-mouse": "🖱️", "mouse": "🖱️",
+    "computer": "💻", "laptop": "💻", "desktop": "💻",
+    "tablet": "📱", "video-camera": "📷", "camera": "📷",
+    "car": "🚗", "automobile": "🚗",
+    "peripheral": "📟", "generic-device": "📟",
+}
+
+
+def bt_icon(icon, name):
+    """Return an emoji badge for the device type from BlueZ icon/name."""
+    if icon:
+        key = icon.lower()
+        for k, ico in BT_ICON_MAP.items():
+            if k in key:
+                return ico
+    n = (name or "").lower()
+    for k, ico in BT_ICON_MAP.items():
+        if k in n:
+            return ico
+    if any(w in n for w in ("speaker", "soundbar", "woofer", "audio")):
+        return "🔊"
+    if any(w in n for w in ("headphone", "headset", "earbud", "airpod", "buds")):
+        return "🎧"
+    if any(w in n for w in ("joypad", "gamepad", "controller", "joystick",
+                            "xbox", "playstation", "dualshock")):
+        return "🎮"
+    if any(w in n for w in ("phone", "iphone", "galaxy", "pixel",
+                            "smartphone")):
+        return "📱"
+    if any(w in n for w in ("watch", "galaxy watch", "apple watch")):
+        return "⌚"
+    if any(w in n for w in ("keyboard", "kbd")):
+        return "⌨️"
+    if "mouse" in n:
+        return "🖱️"
+    if any(w in n for w in ("car", "auto", "vehicle")):
+        return "🚗"
+    if any(w in n for w in ("tablet", "ipad")):
+        return "📱"
+    return "📟"
+
+
+def bt_info(mac):
+    """Parse `bluetoothctl info <mac>` for icon, class and battery."""
+    info = {"icon": None, "battery": None, "class": None}
     out = run(["bluetoothctl", "info", mac])
     for line in out.splitlines():
-        if "Battery Percentage" not in line:
-            continue
-        # bluetoothctl prints: Battery Percentage: 0x64 (100)
+        if "Icon:" in line:
+            info["icon"] = line.split("Icon:", 1)[1].strip()
+        if "Class:" in line:
+            info["class"] = line.split("Class:", 1)[1].strip()
         m = re.search(r"Battery Percentage:\s*0x[0-9a-fA-F]+\s*\((\d+)\)", line)
         if m:
-            return int(m.group(1))
+            info["battery"] = int(m.group(1))
+            continue
         m = re.search(r"Battery Percentage:\s*(\d+)", line)
         if m:
-            return int(m.group(1))
-    return None
+            info["battery"] = int(m.group(1))
+    return info
 
 
 def bt_devices():
@@ -456,9 +520,11 @@ def bt_devices():
             paired.add(p[1])
     out = []
     for m, n in known.items():
-        bat = bt_battery(m) if m in conn else None
-        out.append({"mac": m, "name": n, "connected": m in conn,
-                    "paired": m in paired, "battery": bat})
+        info = bt_info(m)
+        out.append({
+            "mac": m, "name": n, "icon": bt_icon(info.get("icon"), n),
+            "connected": m in conn, "paired": m in paired,
+            "battery": info.get("battery")})
     return out
 
 
@@ -609,6 +675,56 @@ class HSlider(Gtk.DrawingArea):
 
 
 # ---------------------------------------------------------------------------
+# marquee label: scrolls text left-to-right when it does not fit
+# ---------------------------------------------------------------------------
+class MarqueeLabel(Gtk.EventBox):
+    def __init__(self, text, scale=1.0, max_chars=24, interval=120):
+        super().__init__()
+        self.text = text
+        self.scale = scale
+        self.max_chars = max_chars
+        self.interval = interval
+        self._timer = None
+        self._pos = 0
+        self.lbl = Gtk.Label(label=text)
+        self.lbl.set_ellipsize(Pango.EllipsizeMode.NONE)
+        self.lbl.set_xalign(0)
+        self.lbl.set_hexpand(True)
+        self.add(self.lbl)
+        self.show_all()
+        self._maybe_start()
+
+    def _maybe_start(self):
+        # Only scroll if the text is longer than the visible allowance.
+        if len(self.text) > self.max_chars:
+            self._timer = GLib.timeout_add(self.interval, self._tick)
+
+    def _tick(self):
+        if self._timer is None:
+            return False
+        self._pos = (self._pos + 1) % max(1, len(self.text) + 4)
+        rotated = self.text[self._pos:] + self.text[:self._pos]
+        self.lbl.set_text(rotated[: self.max_chars])
+        return True
+
+    def set_text(self, text):
+        self.text = text
+        self.lbl.set_text(text)
+        if getattr(self, "_timer", None) is not None:
+            GLib.source_remove(self._timer)
+            self._timer = None
+        if len(text) > self.max_chars:
+            self._pos = 0
+            self._timer = GLib.timeout_add(self.interval, self._tick)
+
+    def do_destroy(self):
+        if getattr(self, "_timer", None) is not None:
+            GLib.source_remove(self._timer)
+            self._timer = None
+        Gtk.EventBox.do_destroy(self)
+
+
+# ---------------------------------------------------------------------------
 # panel
 # ---------------------------------------------------------------------------
 class Panel(Gtk.Window):
@@ -641,12 +757,14 @@ class Panel(Gtk.Window):
         self._wall_busy = False
         self._rot_pending = False
         self.zt_error = ""
-
+        self.bt_selected = None
+        self._modal_overlay = None
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                        spacing=int(8 * self.scale))
+        self.root = root
         for m in ("top", "start", "end"):
             getattr(root, "set_margin_" + m)(int(9 * self.scale))
-        # fixed gap for waybar (its 48px layer is not covered by fullscreen)
+        # Keep content above the bottom bar (bar is a top layer and can cover input).
         root.set_margin_bottom(WAYBAR_HEIGHT + int(round(BOTTOM_GAP * self.scale)))
         self.add(root)
 
@@ -698,7 +816,8 @@ class Panel(Gtk.Window):
                 mon.connect("notify::geometry", self.on_monitor_geometry)
         except Exception:
             pass
-        self.fullscreen()
+        # Geometry managed by Sway rules (avoids compositor fullscreen).
+        self._fit_workarea()
         GLib.idle_add(self.first_refresh)
         GLib.timeout_add_seconds(5, self.refresh_sinks)
         GLib.timeout_add_seconds(1, self.poll_volume)
@@ -854,14 +973,75 @@ class Panel(Gtk.Window):
 
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                         spacing=int(7 * self.scale))
-        scan = Gtk.Button(label="[+] Scan")
-        scan.get_style_context().add_class("btn-item")
-        scan.get_style_context().add_class("btn-mini")
-        scan.set_halign(Gtk.Align.START)
-        items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                        spacing=int(5 * self.scale))
-        inner.pack_start(scan, False, False, 0)
-        inner.pack_start(items, False, False, 0)
+
+        if kind == "bt":
+            # Toolbar: [Scan] [Discoverable] left, [Disconnect] [Forget] right.
+            # Disconnect/Forget only visible when a connected device is selected.
+            toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                              spacing=int(6 * self.scale))
+
+            left = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                           spacing=int(6 * self.scale))
+            left.set_halign(Gtk.Align.START)
+
+            scan = Gtk.Button(label="[+] Scan")
+            scan.get_style_context().add_class("btn-item")
+            scan.get_style_context().add_class("btn-mini")
+            left.pack_start(scan, False, False, 0)
+
+            disc = Gtk.Button(label="[+] Discoverable")
+            disc.get_style_context().add_class("btn-item")
+            disc.get_style_context().add_class("btn-mini")
+            disc.connect("clicked", lambda *a: self.on_bt_discoverable_click())
+            left.pack_start(disc, False, False, 0)
+            toolbar.pack_start(left, False, False, 0)
+
+            right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                            spacing=int(6 * self.scale))
+            right.set_halign(Gtk.Align.END)
+
+            dconn = self.mini("[x] Disconnect",
+                              self.bt_disconnect_selected, danger=True)
+            dconn.get_style_context().add_class("btn-mini")
+            dconn.hide()
+            right.pack_start(dconn, False, False, 0)
+            self.bt_disc_btn = dconn
+
+            dforg = self.mini("[x] Forget", self.bt_forget_selected,
+                              danger=True)
+            dforg.get_style_context().add_class("btn-mini")
+            dforg.hide()
+            right.pack_start(dforg, False, False, 0)
+            self.bt_forget_btn = dforg
+
+            toolbar.pack_end(right, False, False, 0)
+            inner.pack_start(toolbar, False, False, 0)
+
+            # Horizontal scrolling tile row: same-size tiles, fill left->right,
+            # scroll right when there are more devices than fit.
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.AUTOMATIC,
+                                Gtk.PolicyType.NEVER)
+            scroller.set_hexpand(True)
+            scroller.set_min_content_height(int(140 * self.scale))
+
+            items = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                            spacing=int(4 * self.scale))
+            items.set_hexpand(False)
+            items.set_halign(Gtk.Align.START)
+            items.set_valign(Gtk.Align.START)
+            scroller.add(items)
+            inner.pack_start(scroller, True, True, 0)
+        else:
+            items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                            spacing=int(5 * self.scale))
+            scan = Gtk.Button(label="[+] Scan")
+            scan.get_style_context().add_class("btn-item")
+            scan.get_style_context().add_class("btn-mini")
+            scan.set_halign(Gtk.Align.START)
+            inner.pack_start(scan, False, False, 0)
+            inner.pack_start(items, False, False, 0)
+
         card.pack_start(inner, False, False, 0)
 
         if kind == "wifi":
@@ -876,6 +1056,8 @@ class Panel(Gtk.Window):
             sw.set_active(bt_enabled())
             sw.connect("notify::active", self.on_bt)
             scan.connect("clicked", lambda *a: self.scan_bt())
+            disc.set_sensitive(bt_enabled())
+            self._bt_update_global_buttons()
         return card
 
     def wall_card_ui(self):
@@ -968,13 +1150,13 @@ class Panel(Gtk.Window):
 
     # ---- startup / periodic refresh ------------------------------------
     def first_refresh(self):
-        self.refresh_wifi()
-        self.refresh_bt()
-        self.refresh_sinks()
-        self.refresh_wall()
-        self.refresh_streams()
-        self.refresh_rotate()
-        self.refresh_zerotier()
+        for fn in (self.refresh_wifi, self.refresh_bt, self.refresh_sinks,
+                   self.refresh_wall, self.refresh_streams,
+                   self.refresh_rotate, self.refresh_zerotier):
+            try:
+                fn()
+            except Exception as e:
+                plog("first_refresh %s err %r" % (fn.__name__, e))
         return False
 
     def refresh_rotate(self):
@@ -1139,10 +1321,19 @@ class Panel(Gtk.Window):
 
     # ---- bluetooth ------------------------------------------------------
     def refresh_bt(self):
+        """Kick off a background refresh of BT state, then apply UI on main thread."""
         en = bt_enabled()
         self._set_switch(self.bt_sw, en)
-        self.bt_devs = bt_devices() if en else []
-        conn = [d for d in self.bt_devs if d["connected"]]
+
+        def work():
+            devs = bt_devices() if en else []
+            GLib.idle_add(self._refresh_bt_ui, en, devs)
+        self.bg(work)
+
+    def _refresh_bt_ui(self, en, devs):
+        """Apply BT UI updates on the main GTK thread (called via idle_add)."""
+        self.bt_devs = devs
+        conn = [d for d in devs if d["connected"]]
         if not en:
             self.bt_status.set_text("disabled")
         elif conn:
@@ -1151,41 +1342,146 @@ class Panel(Gtk.Window):
         else:
             self.bt_status.set_text("[ ] Not connected")
         self._clear(self.bt_box)
-        devs = sorted(self.bt_devs,
-                      key=lambda d: (not d["connected"], not d["paired"],
-                                     d["name"].lower()))
-        if not devs and en:
+        devs_sorted = sorted(devs,
+                             key=lambda d: (not d["connected"], not d["paired"],
+                                            d["name"].lower()))
+        if not devs_sorted and en:
             empty = Gtk.Label(label="[ ] No devices yet - tap Scan")
             empty.get_style_context().add_class("label-sub")
             empty.set_xalign(0)
             self.bt_box.pack_start(empty, False, False, 0)
-        for d in devs:
+        for d in devs_sorted:
             self.bt_box.pack_start(self.bt_row(d), False, False, 0)
         self.bt_box.show_all()
         self.bt_rev.set_visible(en)
+        self._bt_update_global_buttons()
+        return False
 
     def bt_row(self, d):
-        if d["connected"]:
-            state = "connected"
-            if d.get("battery") is not None:
-                state += " \u00b7 %d%% battery" % d["battery"]
-        elif d["paired"]:
-            state = "saved"
+        """One device tile: vertical stack -> icon, name, battery, status.
+        Tiles are laid out horizontally in the scroller (left to right)."""
+        mac = d["mac"]
+        ico = d.get("icon", "📟")
+        connected = d["connected"]
+        paired = d["paired"]
+        bat = d.get("battery")
+
+        # Icon centered at top, plain white.
+        ilab = Gtk.Label(label=ico)
+        ilab.get_style_context().add_class("tile-icon")
+        ilab.set_xalign(0.5)
+        ilab.set_size_request(-1, int(40 * self.scale))
+
+        # Device name below icon; marquee if too long for the tile width.
+        name = MarqueeLabel(d["name"], scale=self.scale,
+                            max_chars=max(10, int(10 * self.scale)))
+        name.lbl.set_xalign(0.5)
+
+        # Battery line (only if reported).
+        bat_lab = None
+        if bat is not None:
+            bat_lab = Gtk.Label(label="%d%%" % bat)
+            bat_lab.get_style_context().add_class("tile-sub")
+            bat_lab.set_xalign(0.5)
+            bat_lab.set_size_request(-1, int(18 * self.scale))
+
+        # Connection status last.
+        if connected:
+            status_txt = "connected"
+        elif paired:
+            status_txt = "paired"
         else:
-            state = "new"
-        actions = []
+            status_txt = "new"
+        slab = Gtk.Label(label=status_txt)
+        slab.get_style_context().add_class("tile-sub")
+        slab.set_xalign(0.5)
+        slab.set_size_request(-1, int(18 * self.scale))
+
+        # Vertical stack inside the tile, centered within the tilebox.
+        stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                        spacing=int(6 * self.scale))
+        stack.set_halign(Gtk.Align.CENTER)
+        stack.set_valign(Gtk.Align.CENTER)
+        stack.pack_start(ilab, False, False, 0)
+        stack.pack_start(name, False, False, 0)
+        if bat_lab is not None:
+            stack.pack_start(bat_lab, False, False, 0)
+        stack.pack_start(slab, False, False, 0)
+
+        b = Gtk.Button()
+        b.get_style_context().add_class("btn-item")
+        b.get_style_context().add_class("action-tile")
+        b.set_size_request(int(70 * self.scale), int(130 * self.scale))
+        b.set_halign(Gtk.Align.START)
+        b.set_valign(Gtk.Align.START)
+        if connected:
+            add_classes(b, "on")
+        b.add(stack)
+        b.connect("clicked", lambda *a, dd=d: self.bt_toggle(dd))
+        return b
+
+    # ---- bluetooth actions ------------------------------------------------
+    def bt_toggle(self, d):
+        """Tap a tile: connect if not connected, disconnect otherwise."""
+        self.bt_selected = d["mac"]
+        self._bt_update_global_buttons()
         if d["connected"]:
-            actions.append(
-                self.mini("[x] Disconnect",
-                          lambda dd=d: self.bt_disconnect(dd)))
+            self.bt_disconnect(d)
         else:
-            actions.append(
-                self.mini("[+] Connect", lambda dd=d: self.bt_connect(dd)))
-        if d["paired"] or d["connected"]:
-            actions.append(
-                self.mini("[x] Forget", lambda dd=d: self.bt_forget(dd),
-                          danger=True))
-        return self.net_item(d["connected"], d["name"], state, actions)
+            self.bt_connect(d)
+
+    def bt_disconnect_selected(self):
+        if not self.bt_selected:
+            return
+        d = next((x for x in self.bt_devs if x["mac"] == self.bt_selected),
+                 None)
+        if d and d["connected"]:
+            self.bt_disconnect(d)
+
+    def bt_forget_selected(self):
+        if not self.bt_selected:
+            return
+        d = next((x for x in self.bt_devs if x["mac"] == self.bt_selected),
+                 None)
+        if not d:
+            return
+        if not self.modal("Forget device",
+                          "Remove %s from Bluetooth?" % d["name"],
+                          ok_label="[x] Forget"):
+            return
+        self.bt_forget(d)
+        self.bt_selected = None
+        self._bt_update_global_buttons()
+
+    def _bt_update_global_buttons(self):
+        en = bt_enabled()
+        d = (next((x for x in self.bt_devs if x["mac"] == self.bt_selected),
+                  None) if self.bt_selected else None)
+        connected_sel = bool(d and d["connected"])
+        # Disconnect/Forget only visible when a device is connected.
+        if self.bt_disc_btn is not None:
+            self.bt_disc_btn.set_visible(en and connected_sel)
+            self.bt_disc_btn.set_sensitive(en and connected_sel)
+        if self.bt_forget_btn is not None:
+            self.bt_forget_btn.set_visible(en and bool(self.bt_selected))
+            self.bt_forget_btn.set_sensitive(en and bool(self.bt_selected))
+
+    def on_bt_discoverable_click(self):
+        """Toggle discoverable/pairable on/off (button, not switch)."""
+        if self.guard:
+            return
+        self.bt_status.set_text("toggling discoverable...")
+
+        def work():
+            cur = bt_discoverable()
+            rc, _o, err = qrun(["bluetoothctl", "discoverable",
+                                "off" if cur else "on"], timeout=15)
+            if rc != 0:
+                plog("bt discoverable rc=%s err=%r" % (rc, err))
+            qrun(["bluetoothctl", "pairable",
+                  "off" if cur else "on"], timeout=15)
+            GLib.idle_add(self.refresh_bt)
+        self.bg(work)
 
     def scan_bt(self):
         self.bt_status.set_text("scanning...")
@@ -1271,9 +1567,21 @@ class Panel(Gtk.Window):
         area.pack_start(ok, False, False, 0)
 
         dlg.show_all()
-        resp = dlg.run()
+        # Dim the panel behind the modal ("blur behind") so the password
+        # popup stands out and sits exactly at the center of the screen.
+        try:
+            self.set_opacity(0.50)
+        except Exception:
+            pass
+        try:
+            resp = dlg.run()
+        finally:
+            try:
+                self.set_opacity(1.0)
+            except Exception:
+                pass
+            dlg.destroy()
         val = ent.get_text() if ent is not None else None
-        dlg.destroy()
         if entry:
             return val if resp == Gtk.ResponseType.OK else None
         return resp == Gtk.ResponseType.OK
@@ -1505,13 +1813,26 @@ class Panel(Gtk.Window):
             pass
         return 7 if self.scale >= 1.1 else 11
 
-    def on_monitor_geometry(self, *_a):
-        """Rebuild the carousel for the new orientation after a rotation.
+    def _fit_workarea(self):
+        try:
+            disp = Gdk.Display.get_default()
+            mon = disp.get_primary_monitor() or disp.get_monitor(0)
+            if mon is not None and hasattr(mon, "get_workarea"):
+                wa = mon.get_workarea()
+                if wa.width > 50 and wa.height > 50:
+                    self.set_default_size(wa.width, wa.height)
+                    self.resize(wa.width, wa.height)
+                    return
+            mw, mh = monitor_size()
+            if mw > 50 and mh > 50:
+                h = max(50, mh - WAYBAR_HEIGHT - int(round(BOTTOM_GAP * self.scale)))
+                self.set_default_size(mw, h)
+                self.resize(mw, h)
+        except Exception:
+            pass
 
-        The old carousel keeps a large minimum width alive, which can stop
-        the fullscreen window from shrinking back to portrait.  Clear it
-        first, then rebuild with the new (monitor-based) geometry.
-        """
+    def on_monitor_geometry(self, *_a):
+        """Rebuild layout after rotation/output geometry change."""
         if self._rot_pending:
             return
         self._rot_pending = True
@@ -1521,6 +1842,7 @@ class Panel(Gtk.Window):
 
     def _rotation_settle(self):
         self._rot_pending = False
+        self._fit_workarea()
         if self.wall_pics:
             self._wall_busy = True
             try:
@@ -1529,15 +1851,6 @@ class Panel(Gtk.Window):
                 self._wall_busy = False
         self.wall_strip.show_all()
         self.queue_resize()
-        # The compositor only reconfigures the fullscreen surface when the
-        # window itself asks for the new size; GTK keeps the old, wider size
-        # even after the carousel minimum has shrunk.
-        mw, mh = monitor_size()
-        if mw > 50 and mh > 50 and (mw, mh) != self.get_size():
-            # A plain resize() is ignored while fullscreen, so drop out and
-            # back in to make the compositor configure the new size.
-            self.unfullscreen()
-            self.fullscreen()
         return False
 
     def on_wall_alloc(self, _w, alloc):
@@ -1719,7 +2032,6 @@ def main():
     apply_css(ui_scale())
     win = Panel()
     win.show_all()
-    win.fullscreen()
     Gtk.main()
 
 

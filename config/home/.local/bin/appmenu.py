@@ -16,6 +16,7 @@ def load_accent():
 
 
 ACCENT, ONACC = load_accent()
+WAYBAR_HEIGHT = int(os.environ.get("WAYBAR_HEIGHT", "48"))
 
 def hex_to_rgba(h, a):
     h = h.lstrip('#')
@@ -63,9 +64,21 @@ class AppMenu(Gtk.Window):
         self.set_decorated(False)
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
-        self.fullscreen()
+        # Geometry managed by Sway rules (avoids compositor fullscreen).
         try:
             self.set_role("org.swaytablet.appmenu")
+        except Exception:
+            pass
+        self._fit_workarea()
+        try:
+            disp = Gdk.Display.get_default()
+            mon = disp.get_primary_monitor() or disp.get_monitor(0)
+            if mon is not None:
+                mon.connect("notify::geometry", lambda *_a: self._fit_workarea())
+                try:
+                    mon.connect("notify::workarea", lambda *_a: self._fit_workarea())
+                except Exception:
+                    pass
         except Exception:
             pass
         self.connect("key-press-event", self.on_key)
@@ -73,7 +86,8 @@ class AppMenu(Gtk.Window):
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         root.set_margin_top(16)
-        root.set_margin_bottom(16)
+        # Keep content above the bottom bar (bar can cover input).
+        root.set_margin_bottom(WAYBAR_HEIGHT + 16)
         root.set_margin_start(16)
         root.set_margin_end(16)
         self.add(root)
@@ -144,6 +158,25 @@ class AppMenu(Gtk.Window):
         except Exception as e:
             print("launch failed:", e)
         Gtk.main_quit()
+
+    def _fit_workarea(self):
+        try:
+            disp = Gdk.Display.get_default()
+            mon = disp.get_primary_monitor() or disp.get_monitor(0)
+            if mon is not None and hasattr(mon, "get_workarea"):
+                wa = mon.get_workarea()
+                if wa.width > 50 and wa.height > 50:
+                    self.set_default_size(wa.width, wa.height)
+                    self.resize(wa.width, wa.height)
+                    return
+            if mon is not None:
+                geo = mon.get_geometry()
+                h = int(os.environ.get("WAYBAR_HEIGHT", "48"))
+                if geo.width > 50 and geo.height > h + 50:
+                    self.set_default_size(geo.width, geo.height - h)
+                    self.resize(geo.width, geo.height - h)
+        except Exception:
+            pass
 
     def on_key(self, _w, event):
         if event.keyval == Gdk.KEY_Escape:
