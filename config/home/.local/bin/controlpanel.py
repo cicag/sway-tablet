@@ -771,6 +771,15 @@ class Panel(Gtk.Window):
             self.orientation_locked = os.path.exists(self.orientation_lock_file)
         except Exception:
             self.orientation_locked = False
+        # Screen auto-off block: when True, swayidle is stopped so the screen
+        # will not auto-off/poweroff while idle (e.g. watching media hands-free).
+        self.screen_block_file = os.path.join(
+            os.path.expanduser("~"), ".config", "swaytablet",
+            "screen-blocked")
+        try:
+            self.screen_blocked = os.path.exists(self.screen_block_file)
+        except Exception:
+            self.screen_blocked = False
         # Orientation daemon configuration (read from environment; set per
         # device in /etc/environment or your session startup).
         self.orient_sensor_path = os.environ.get("SENSOR_PATH")
@@ -1156,14 +1165,14 @@ class Panel(Gtk.Window):
 
         self.orient_btn, self.orient_mark, self.orient_sub = self.action_tile(
             "[+]", "Orientation", "unlocked", self.do_orientation_lock)
-        self.pwr_btn, _m, _s = self.action_tile(
-            "[-]", "Shut down", "power", lambda: power_action("off"))
-        self.rst_btn, _m, _s = self.action_tile(
-            "[-]", "Restart", "power", lambda: power_action("restart"))
+        self.power_btn, self.power_mark, self.power_sub = self.action_tile(
+            "[-]", "Powermenu", "open", self.do_powermenu)
+        self.screen_btn, self.screen_mark, self.screen_sub = self.action_tile(
+            "[+]", "Screen Off", "auto", self.do_screen_block)
         self.zt_btn, self.zt_mark, self.zt_sub = self.action_tile(
             "[+]", "ZeroTier", "checking...", self.do_zerotier)
 
-        for t in (self.orient_btn, self.pwr_btn, self.rst_btn, self.zt_btn):
+        for t in (self.orient_btn, self.power_btn, self.screen_btn, self.zt_btn):
             t.set_hexpand(True)
             bar.pack_start(t, True, True, 0)
         return bar
@@ -1172,11 +1181,17 @@ class Panel(Gtk.Window):
     def first_refresh(self):
         for fn in (self.refresh_wifi, self.refresh_bt, self.refresh_sinks,
                    self.refresh_wall, self.refresh_streams,
-                   self.refresh_orientation, self.refresh_zerotier):
+                   self.refresh_orientation, self.refresh_screen_block,
+                   self.refresh_zerotier):
             try:
                 fn()
             except Exception as e:
                 plog("first_refresh %s err %r" % (fn.__name__, e))
+        # Ensure swayidle matches current block state at startup.
+        if self.screen_blocked:
+            self._stop_swayidle()
+        else:
+            self._start_swayidle()
         return False
 
     def refresh_orientation(self):
@@ -1192,6 +1207,95 @@ class Panel(Gtk.Window):
             self.orient_btn.get_style_context().remove_class("on")
             self.orient_sub.set_text("auto (%s)" % deg.get(cur, cur or "-"))
         return False
+
+    def refresh_screen_block(self):
+        """Update the screen-off block tile."""
+        if self.screen_blocked:
+            self.screen_mark.set_text("[-]")
+            self.screen_btn.get_style_context().add_class("on")
+            self.screen_sub.set_text("blocked")
+        else:
+            self.screen_mark.set_text("[+]")
+            self.screen_btn.get_style_context().remove_class("on")
+            self.screen_sub.set_text("auto")
+        return False
+
+    def do_powermenu(self):
+        """Open the powermenu dialog."""
+        try:
+            subprocess.Popen(
+                [os.path.join(os.path.expanduser("~"), ".local", "bin", "powermenu")],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+        except Exception as e:
+            plog("powermenu launch err %r" % e)
+        return False
+
+    def do_screen_block(self):
+        """Toggle screen auto-off block (stops/starts swayidle)."""
+        self.screen_blocked = not self.screen_blocked
+        self._write_screen_block_state(self.screen_blocked)
+        self.refresh_screen_block()
+        if self.screen_blocked:
+            self._stop_swayidle()
+        else:
+            self._start_swayidle()
+        return False
+
+    def _write_screen_block_state(self, blocked):
+        try:
+            os.makedirs(os.path.dirname(self.screen_block_file), exist_ok=True)
+        except Exception:
+            pass
+        if blocked:
+            try:
+                with open(self.screen_block_file, "w") as f:
+                    f.write("blocked\n")
+            except Exception as e:
+                plog("screen block write err %r" % e)
+        else:
+            try:
+                if os.path.exists(self.screen_block_file):
+                    os.remove(self.screen_block_file)
+            except Exception as e:
+                plog("screen unblock remove err %r" % e)
+
+    def _swayidle_cmd(self):
+        return [
+            "swayidle", "-w",
+            "timeout", "300", "swaymsg 'output * dpms off'",
+            "resume", "swaymsg 'output * dpms on'",
+            "timeout", "900", "systemctl poweroff",
+        ]
+
+    def _start_swayidle(self):
+        """Start swayidle if not blocked and not already running."""
+        if self.screen_blocked:
+            return
+        # Avoid duplicates.
+        rc = subprocess.run(["pgrep", "-x", "swayidle"],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL).returncode
+        if rc == 0:
+            return
+        try:
+            subprocess.Popen(
+                self._swayidle_cmd(),
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+            plog("swayidle started")
+        except Exception as e:
+            plog("swayidle start err %r" % e)
+
+    def _stop_swayidle(self):
+        """Stop swayidle so idle screen-off/poweroff is inhibited."""
+        try:
+            run(["pkill", "-x", "swayidle"], timeout=5)
+        except Exception:
+            pass
+        plog("swayidle stopped (screen block active)")
 
     def refresh_zerotier(self):
         en, act = zerotier_state()

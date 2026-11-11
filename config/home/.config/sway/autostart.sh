@@ -1,7 +1,9 @@
 #!/bin/sh
 # Started by sway itself (exec in ~/.config/sway/config).
 export MOZ_ENABLE_WAYLAND=1
-export LIBVA_DRIVER_NAME=i965
+#export LIBVA_DRIVER_NAME=i965
+# Use Vulkan renderer for sway (GLES2 is the default on this hardware).
+#export WLR_RENDERER=vulkan
 
 BIN="$HOME/.local/bin"
 CFG="$HOME/.config/sway"
@@ -52,5 +54,14 @@ swaymsg 'gaps outer all set 3' >/dev/null 2>&1
 
 # power button (short press = screen, long press = power dialog)
 [ -x "$BIN/powerkeyd" ] && "$BIN/powerkeyd" >/tmp/powerkeyd.log 2>&1 &
+
+# Auto screen off after idle, then power off. Disabled when screen-blocked
+# file exists (toggled from controlpanel for hands-free media playback).
+if [ ! -f "$HOME/.config/swaytablet/screen-blocked" ]; then
+  swayidle -w \
+    timeout 300 'swaymsg "output * dpms off"' \
+    resume 'swaymsg "output * dpms on"' \
+    timeout 900 'systemctl poweroff' &
+fi
 
 export TERMINAL=alacritty
