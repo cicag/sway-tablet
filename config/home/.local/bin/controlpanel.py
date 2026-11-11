@@ -561,9 +561,14 @@ def zerotier_state():
 
 
 def zerotier_toggle():
-    """Enable+start or disable+stop. Returns an error string ('' on success)."""
-    en, _ac = zerotier_state()
-    steps = (["disable", "stop"] if en else ["enable", "start"])
+    """Enable+start or stop+disable. Returns an error string ('' on success)."""
+    en, ac = zerotier_state()
+    # Treat an active service as "on" so a disabled-but-active state can be
+    # turned off cleanly (stop removes the tunnel/interface and IP).
+    if ac or en:
+        steps = ["stop", "disable"]
+    else:
+        steps = ["enable", "start"]
     for step in steps:
         rc, _out, err = qrun([SUDO, "-n", SYSTEMCTL, step, ZEROTIER],
                              timeout=25)
@@ -1299,10 +1304,14 @@ class Panel(Gtk.Window):
 
     def refresh_zerotier(self):
         en, act = zerotier_state()
-        if en:
+        if act:
             self.zt_mark.set_text("[+]")
             self.zt_btn.get_style_context().add_class("on")
-            self.zt_sub.set_text("active" if act else "enabled (stopped)")
+            self.zt_sub.set_text("active")
+        elif en:
+            self.zt_mark.set_text("[+]")
+            self.zt_btn.get_style_context().add_class("on")
+            self.zt_sub.set_text("enabled (stopped)")
         else:
             self.zt_mark.set_text("[-]")
             self.zt_btn.get_style_context().remove_class("on")
