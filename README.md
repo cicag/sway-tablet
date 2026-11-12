@@ -61,6 +61,7 @@ Installed on the device (not provided by this repo):
 - `wpctl`/`pipewire` (PipeWire) for audio, `nmcli` for WiFi, `bluetoothctl`
   for Bluetooth
 - `libinput` + `wl-clipboard` for the touch/clipboard helpers
+- `lisgd` (optional) for touchscreen gestures via `sway-tablet-gestures` (3-finger swipes: workspace switch, close, fullscreen; auto-rotates with output transform)
 
 ## Layout
 
@@ -85,6 +86,7 @@ screenshots/         screenshots of the running desktop
 | `controlpanel` | fullscreen GTK3 settings panel |
 | `orientation-daemon` | background accelerometer polling daemon that auto-rotates the sway output when orientation is unlocked (configured via env vars |
 | `powerkeyd` | power button: short press toggles the screen, long press shows the power dialog |
+| `sway-tablet-gestures` | manages `lisgd` 3-finger touchscreen gestures (workspace switch/close/fullscreen), restarts on output transform changes; `GESTURE_DEVICE` overrides auto-detection |
 | `waybar-app-state.sh` | reports `on`/`off` for a GTK `app_id` |
 | `waybar-app-toggle.sh` | launches an app, or kills it if already running |
 | `waybar-kbd.sh` / `waybar-kbd-state.sh` | toggles the on-screen keyboard and reports its state |
@@ -103,6 +105,7 @@ Kept out of the shipped configuration on purpose — enable them per machine:
 | On-screen keyboard size | `waybar-kbd.sh` | `WVKBD_HEIGHT` / `WVKBD_LAYOUT` |
 | Renderer | session start | `WLR_RENDERER=vulkan` or `gles2` |
 | Orientation sensor | `orientation-daemon` env vars | `SENSOR_PATH`, `OUTPUT_NAME`, `POLL_INTERVAL_MS`, `EMA_ALPHA`, `ORIENTATION_OFFSET` — set per machine |
+| Touch gestures | `sway-tablet-gestures` | `GESTURE_DEVICE` to select touch device; `~/.config/swaytablet/gestures-disabled` to disable; `~/.config/swaytablet/gestures-orient.json` to override per-transform `lisgd -o` |
 
 ## Documentation
 

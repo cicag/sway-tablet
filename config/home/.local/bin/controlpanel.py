@@ -1730,6 +1730,9 @@ class Panel(Gtk.Window):
         self.bt_status.set_text("connecting %s..." % d["name"])
 
         def work():
+            # Auto-trust so HID/gamepad profiles (e.g. DS4) attach without a
+            # separate manual trust step.
+            qrun(["bluetoothctl", "trust", d["mac"]], timeout=15)
             rc, out, err = qrun(["bluetoothctl", "connect", d["mac"]],
                                 timeout=30)
             if rc != 0:

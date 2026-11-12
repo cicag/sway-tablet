@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from shutil import which
+
+CFG = os.path.join(os.path.expanduser("~"), ".config", "swaytablet")
+DISABLED = os.path.join(CFG, "gestures-disabled")
+PIDFILE = os.path.join(CFG, "gestures-manager.pid")
+ORIENT_FILE = os.path.join(CFG, "gestures-orient.json")
+LOGFILE = "/tmp/sway-tablet-gestures.log"
+
+# Sway output transform -> lisgd -o orientation (0-3).
+# lisgd rotates gesture directions by this many 90-degree steps to compensate
+# for screen rotation, so gestures are defined once in a canonical (visual) frame.
+# Override via ~/.config/swaytablet/gestures-orient.json, e.g. {"90": 0}.
+DEFAULT_TRANSFORM_TO_O = {
+    "normal": 0,
+    "90": 1,
+    "180": 2,
+    "270": 3,
+    "flipped": 0,
+    "flipped-90": 1,
+    "flipped-180": 2,
+    "flipped-270": 3,
+}
+
+
+def log(msg):
+    try:
+        with open(LOGFILE, "a") as f:
+            f.write(time.strftime("%H:%M:%S ") + str(msg) + "\n")
+    except Exception:
+        pass
+
+
+def load_transform_to_o():
+    m = dict(DEFAULT_TRANSFORM_TO_O)
+    try:
+        with open(ORIENT_FILE) as f:
+            ov = json.load(f)
+        if isinstance(ov, dict):
+            for k, v in ov.items():
+                if isinstance(v, int) and 0 <= v <= 3:
+                    m[k] = v
+    except Exception:
+        pass
+    return m
+
+
+def run(cmd, timeout=5):
+    try:
+        return subprocess.check_output(
+            cmd, stderr=subprocess.DEVNULL, timeout=timeout
+        ).decode(errors="replace")
+    except Exception:
+        return ""
+
+
+def sway_output_transform():
+    out = run(["swaymsg", "-t", "get_outputs"])
+    try:
+        data = json.loads(out or "[]")
+    except Exception:
+        return "normal"
+    name = os.environ.get("OUTPUT_NAME") or os.environ.get("GESTURE_OUTPUT")
+    for o in data:
+        if name and o.get("name") != name:
+            continue
+        if not o.get("headless") and o.get("name"):
+            return o.get("transform", "normal") or "normal"
+    for o in data:
+        if not o.get("headless") and o.get("name"):
+            return o.get("transform", "normal") or "normal"
+    return "normal"
+
+
+def detect_device():
+    dev = os.environ.get("GESTURE_DEVICE") or os.environ.get("TOUCH_DEVICE") or ""
+    if dev:
+        return dev
+    out = run(["libinput", "list-devices"], timeout=8)
+    cur_dev = ""
+    for line in out.splitlines():
+        if line.startswith("Kernel:"):
+            cur_dev = line.split(":", 1)[1].strip()
+        if "Capabilities:" in line and "touch" in line and cur_dev:
+            return cur_dev
+    return ""
+
+
+def lisgd_cmd(dev, transform, to_o):
+    o = to_o.get(transform, 0)
+    # Gestures defined once in canonical (visual) frame; lisgd -o compensates.
+    # visual left->right = workspace 1, right->left = workspace 2,
+    # up->down = close, down->up = fullscreen toggle.
+    cmd = [
+        "lisgd", "-d", dev, "-o", str(o),
+        "-g", "3,LR,*,*,R,swaymsg workspace number 1",
+        "-g", "3,RL,*,*,R,swaymsg workspace number 2",
+        "-g", "3,UD,*,*,R,swaymsg kill",
+        "-g", "3,DU,*,*,R,swaymsg fullscreen toggle",
+    ]
+    log(f"transform={transform} -o={o} cmd={cmd}")
+    return cmd
+
+
+def kill_lisgd():
+    subprocess.run(
+        ["pkill", "-x", "lisgd"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def kill_manager(except_self=False):
+    if os.path.exists(PIDFILE):
+        try:
+            pid = int(open(PIDFILE).read().strip())
+            if not (except_self and pid == os.getpid()):
+                os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        try:
+            os.remove(PIDFILE)
+        except Exception:
+            pass
+
+
+def is_disabled():
+    return os.path.exists(DISABLED)
+
+
+def daemon():
+    os.makedirs(CFG, exist_ok=True)
+    with open(PIDFILE, "w") as f:
+        f.write(str(os.getpid()))
+    log(f"manager start pid={os.getpid()}")
+
+    dev = detect_device()
+    if not dev or not os.path.exists(dev) or not which("lisgd"):
+        log(f"cannot start: dev={dev} lisgd={which('lisgd')}")
+        try:
+            os.remove(PIDFILE)
+        except Exception:
+            pass
+        return 1
+
+    child = None
+    last_cmd = None
+    last_orient_mtime = None
+
+    def cleanup(*_a):
+        kill_lisgd()
+        try:
+            if child and child.poll() is None:
+                child.terminate()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(PIDFILE):
+                cur = open(PIDFILE).read().strip()
+                if cur == str(os.getpid()):
+                    os.remove(PIDFILE)
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, cleanup)
+    signal.signal(signal.SIGINT, cleanup)
+
+    while True:
+        if is_disabled():
+            kill_lisgd()
+            child = None
+            last_cmd = None
+            time.sleep(2)
+            continue
+
+        to_o = load_transform_to_o()
+        try:
+            orient_mtime = os.path.getmtime(ORIENT_FILE)
+        except Exception:
+            orient_mtime = None
+        tx = sway_output_transform()
+        cmd = lisgd_cmd(dev, tx, to_o)
+
+        # Restart if lisgd died, args changed (transform/orientation), or override updated.
+        need_restart = (
+            child is None
+            or child.poll() is not None
+            or cmd != last_cmd
+            or orient_mtime != last_orient_mtime
+        )
+        if need_restart:
+            kill_lisgd()
+            time.sleep(0.1)
+            try:
+                child = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                last_cmd = cmd
+                last_orient_mtime = orient_mtime
+            except Exception as e:
+                log(f"lisgd start failed: {e}")
+                child = None
+                last_cmd = None
+        time.sleep(2)
+
+
+def start():
+    if is_disabled():
+        return 0
+    if not which("lisgd"):
+        return 0
+    # Already running manager?
+    if os.path.exists(PIDFILE):
+        try:
+            pid = int(open(PIDFILE).read().strip())
+            os.kill(pid, 0)
+            return 0
+        except Exception:
+            try:
+                os.remove(PIDFILE)
+            except Exception:
+                pass
+    # Spawn manager detached
+    subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "_daemon"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return 0
+
+
+def stop():
+    kill_manager()
+    kill_lisgd()
+    return 0
+
+
+def status():
+    running = (
+        subprocess.run(
+            ["pgrep", "-x", "lisgd"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
+    print("running" if running else "stopped")
+    print("disabled" if is_disabled() else "enabled")
+    tx = sway_output_transform()
+    to_o = load_transform_to_o()
+    print("transform=%s -o=%d" % (tx, to_o.get(tx, 0)))
+    return 0
+
+
+def toggle():
+    os.makedirs(CFG, exist_ok=True)
+    if is_disabled():
+        try:
+            os.remove(DISABLED)
+        except Exception:
+            pass
+        return start()
+    else:
+        with open(DISABLED, "w") as f:
+            f.write("disabled\n")
+        return stop()
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "start"
+    if cmd == "start":
+        return start()
+    if cmd == "stop":
+        return stop()
+    if cmd == "status":
+        return status()
+    if cmd == "toggle":
+        return toggle()
+    if cmd == "_daemon":
+        return daemon()
+    print("usage: %s {start|stop|toggle|status}" % sys.argv[0], file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

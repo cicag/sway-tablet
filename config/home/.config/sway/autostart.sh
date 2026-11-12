@@ -64,4 +64,8 @@ if [ ! -f "$HOME/.config/swaytablet/screen-blocked" ]; then
     timeout 900 'systemctl poweroff' &
 fi
 
+# Touchscreen gestures (lisgd). Disabled when gestures-disabled file exists.
+# Set GESTURE_DEVICE per device (e.g. /dev/input/event2) if auto-detect fails.
+[ -x "$BIN/sway-tablet-gestures" ] && "$BIN/sway-tablet-gestures" start &
+
 export TERMINAL=alacritty
