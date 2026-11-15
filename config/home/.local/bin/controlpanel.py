@@ -24,13 +24,91 @@ import time
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gtk, Gdk, GLib, Pango, GdkPixbuf  # noqa: E402
+gi.require_version("Gio", "2.0")
+from gi.repository import Gtk, Gdk, GLib, Pango, GdkPixbuf, Gio  # noqa: E402
 
 HOME = os.path.expanduser("~")
 BACKLIGHT = "/sys/class/backlight/intel_backlight"
 WALL_FILE = os.path.join(HOME, ".config", "sway", "wallpaper")
 WALL_DIRS = [os.path.join(HOME, "wallpapers")]
 WALL_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+
+# Gesture config shared with sway-tablet-gestures (lisgd).  The panel edits
+# only the slots it shows; any other entry in gestures.json is preserved.
+GEST_CFG_DIR = os.path.join(HOME, ".config", "swaytablet")
+GEST_FILE = os.path.join(GEST_CFG_DIR, "gestures.json")
+GEST_DISABLED = os.path.join(GEST_CFG_DIR, "gestures-disabled")
+GEST_BIN = os.path.join(HOME, ".local", "bin", "sway-tablet-gestures")
+
+# Dropdown: user-facing action name -> lisgd command.  None clears the slot.
+# LAUNCH_SENTINEL opens the in-panel app grid; choosing an app replaces it
+# with a real "gtk-launch <desktop-id>" command.
+LAUNCH_SENTINEL = "__launch_app__"
+GESTURE_ACTIONS = (
+    ("None", None),
+    ("Workspace 1", "swaymsg workspace number 1"),
+    ("Workspace 2", "swaymsg workspace number 2"),
+    ("Close window", "swaymsg kill"),
+    ("Fullscreen toggle", "swaymsg fullscreen toggle"),
+    ("Workspace overview", "$HOME/.local/bin/swayview-toggle"),
+    ("Toggle keyboard", "$HOME/.local/bin/waybar-kbd.sh"),
+    ("Launch app\u2026", LAUNCH_SENTINEL),
+)
+
+
+def launch_cmd_for(app):
+    """Build the shell command lisgd runs for a Gio.AppInfo."""
+    ident = app.get_id() or ""
+    if not ident:
+        fn = app.get_filename() or ""
+        ident = os.path.basename(fn)
+    if ident.endswith(".desktop"):
+        ident = ident[:-8]
+    return "gtk-launch %s" % shlex.quote(ident)
+
+
+def launch_cmd_name(cmd):
+    """App display name if cmd is a Launch-app command, else None."""
+    try:
+        parts = shlex.split(cmd or "")
+    except Exception:
+        return None
+    if len(parts) < 2 or os.path.basename(parts[0]) != "gtk-launch":
+        return None
+    ident = parts[1]
+    if not ident.endswith(".desktop"):
+        ident += ".desktop"
+    try:
+        info = Gio.DesktopAppInfo.new(ident)
+        if info is not None:
+            return info.get_display_name() or info.get_name() or parts[1]
+    except Exception:
+        pass
+    return parts[1][:-8] if parts[1].endswith(".desktop") else parts[1]
+
+GESTURE_SECTION_TITLES = {
+    "three": "Three finger flick",
+    "corner": "Corner gesture",
+    "side": "Side gesture",
+}
+
+# (section, row label, fingers, lisgd dir, lisgd edge)
+# Three-finger flicks use edge "*" (anywhere).  Corners/sides use the edge
+# lisgd matches; the direction points inward from that edge/corner.
+GESTURE_SLOTS = (
+    ("three", "Flick up", 3, "DU", "*"),
+    ("three", "Flick right", 3, "LR", "*"),
+    ("three", "Flick left", 3, "RL", "*"),
+    ("three", "Flick down", 3, "UD", "*"),
+    ("corner", "Top Left", 1, "ULDR", "TL"),
+    ("corner", "Top Right", 1, "URDL", "TR"),
+    ("corner", "Bottom Left", 1, "DLUR", "BL"),
+    ("corner", "Bottom Right", 1, "DRUL", "BR"),
+    ("side", "Top", 1, "UD", "T"),
+    ("side", "Bottom", 1, "DU", "B"),
+    ("side", "Right", 1, "RL", "R"),
+    ("side", "Left", 1, "LR", "L"),
+)
 
 ACCENT_FILE = os.path.join(HOME, ".config", "sway", "accent")
 ACCENT_DEF = "#89b4fa"
@@ -91,6 +169,64 @@ def current_wallpaper():
         return open(WALL_FILE).read().strip()
     except Exception:
         return ""
+
+
+# ---- gesture config helpers ----------------------------------------------
+def gesture_matches(g, fingers, direction, edge):
+    """True if gesture dict g belongs to the panel slot (fingers,dir,edge)."""
+    try:
+        return (int(g.get("fingers", 0)) == fingers
+                and g.get("dir") == direction
+                and g.get("edge") == edge)
+    except Exception:
+        return False
+
+
+def load_gesture_file():
+    """Read gestures.json; an unset slot has no entry (shown as None)."""
+    try:
+        with open(GEST_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return [g for g in data if isinstance(g, dict)]
+    except Exception:
+        pass
+    return []
+
+
+def gesture_cmd_matches(a, b):
+    """True if two commands mean the same dropdown action.
+
+    A plain script path ($HOME/.local/bin/x, ~/.local/bin/x or x) matches its
+    basename so older entries keep preselecting the friendly action name.
+    """
+    if a == b:
+        return True
+    if not a or not b:
+        return False
+
+    def simple(c):
+        c = c.strip()
+        return os.path.basename(c) if ("/" in c and " " not in c) else c
+    return simple(a) == simple(b)
+
+
+def save_gesture_file(items):
+    """Atomically replace gestures.json; the manager reloads on mtime."""
+    try:
+        os.makedirs(GEST_CFG_DIR, exist_ok=True)
+        tmp = GEST_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(items, f, indent=2)
+        os.replace(tmp, GEST_FILE)
+        return True
+    except Exception as e:
+        plog("gestures save err %r" % e)
+        return False
+
+
+def gestures_disabled():
+    return os.path.exists(GEST_DISABLED)
 
 
 def load_accent():
@@ -164,6 +300,8 @@ def make_css(scale):
 .label-sub { font-size: %(sub)dpx; }
 switch { font-size: %(swf)dpx; border-radius: %(swr)dpx; }
 switch slider { min-width: %(sws)dpx; min-height: %(sws)dpx; border-radius: %(swsr)dpx; }
+notebook header.top tab { padding: %(tabpy)dpx %(tabpx)dpx; }
+notebook header.top tab label { font-size: %(tabf)dpx; }
 button.btn-thumb { padding: 2px; border-radius: 4px; }
 
 /* controlpanel-specific structural bits (DESIGN.md: 4px radii, hairlines) */
@@ -198,6 +336,7 @@ button.action-tile {
         "title": p(20), "cf": p(16), "cpy": p(7), "cpx": p(19),
         "crd2": p(12), "rl": p(15), "vl": p(14), "sub": p(11),
         "swf": p(17), "swr": p(13), "sws": p(22), "swsr": p(11),
+        "tabpy": p(7), "tabpx": p(18), "tabf": p(15),
         "bmf": p(12), "bmpy": p(5), "bmpx": p(9),
         "atpad": p(10), "atmin": p(52),
         "tm": p(15), "tn": p(14), "ts": p(11),
@@ -208,6 +347,15 @@ button.action-tile {
 
 def apply_css(scale):
     load_accent()
+    # Native bits we don't fully repaint (menu arrows, scrollbars, popup
+    # frames) follow the theme variant; keep them dark regardless of the
+    # session's light/dark default.
+    try:
+        st = Gtk.Settings.get_default()
+        if st is not None:
+            st.set_property("gtk-application-prefer-dark-theme", True)
+    except Exception:
+        pass
     accent_rgba_25 = hex_to_rgba(ACCENT, 0.25)
     accent_rgba_40 = hex_to_rgba(ACCENT, 0.40)
     css_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -799,7 +947,9 @@ class Panel(Gtk.Window):
             getattr(root, "set_margin_" + m)(int(9 * self.scale))
         # Keep content above the bottom bar (bar is a top layer and can cover input).
         root.set_margin_bottom(WAYBAR_HEIGHT + int(round(BOTTOM_GAP * self.scale)))
-        self.add(root)
+        self.overlay = Gtk.Overlay()
+        self.overlay.add(root)
+        self.add(self.overlay)
 
         # ---- title bar ---------------------------------------------------
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
@@ -815,7 +965,7 @@ class Panel(Gtk.Window):
         bar.pack_end(close, False, False, 0)
         root.pack_start(bar, False, False, 0)
 
-        # ---- scrolling body ---------------------------------------------
+        # ---- tabbed body -------------------------------------------------
         v = int(read_volume())
         b, self.bri_max = read_backlight()
         self.vol_card, self.vol, self.vol_val = self.slider_card(
@@ -825,18 +975,24 @@ class Panel(Gtk.Window):
         self.wifi_card = self.net_card("WiFi", "wifi")
         self.bt_card = self.net_card("Bluetooth", "bt")
         self.wall_card = self.wall_card_ui()
+        self._gest_loading = False
+        self.gest_card = self.gesture_card_ui()
 
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                       spacing=int(8 * self.scale))
-        body.set_hexpand(True)
-        for c in (self.vol_card, self.bri_card,
-                  self.wifi_card, self.bt_card, self.wall_card):
-            body.pack_start(c, False, False, 0)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_overlay_scrolling(True)
-        scroll.add(body)
-        root.pack_start(scroll, True, True, 0)
+        self.notebook = Gtk.Notebook()
+        self.notebook.set_hexpand(True)
+        self.notebook.set_vexpand(True)
+        self.notebook.set_scrollable(False)
+        self.notebook.set_show_border(False)
+        self.device_page = self._tab_page(self.vol_card, self.bri_card)
+        self.network_page = self._tab_page(self.wifi_card, self.bt_card)
+        self.customize_page = self._tab_page(self.wall_card, self.gest_card)
+        self.tab_labels = [Gtk.Label() for _ in range(3)]
+        for page, lbl in zip((self.device_page, self.network_page,
+                              self.customize_page), self.tab_labels):
+            self.notebook.append_page(page, lbl)
+        self._update_tab_marks(self.device_page)
+        self.notebook.connect("switch-page", self.on_tab_switch)
+        root.pack_start(self.notebook, True, True, 0)
 
         # ---- fixed bottom action bar -------------------------------------
         root.pack_end(self.action_bar(), False, False, 0)
@@ -859,6 +1015,43 @@ class Panel(Gtk.Window):
         GLib.timeout_add_seconds(2, self._orientation_tick)
 
     # ---- generic card / button helpers ----------------------------------
+    def _tab_page(self, *cards):
+        """One notebook page: a vertical stack of cards that scrolls when the
+        content is taller than the screen."""
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                       spacing=int(8 * self.scale))
+        body.set_hexpand(True)
+        for c in cards:
+            body.pack_start(c, False, False, 0)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(True)
+        scroll.add(body)
+        return scroll
+
+    def _update_tab_marks(self, current):
+        """Active tab shows [-], the other tabs [+] (same ASCII markers)."""
+        pages = (self.device_page, self.network_page, self.customize_page)
+        for lbl, page, name in zip(self.tab_labels, pages,
+                                   ("Device", "Network", "Customize")):
+            lbl.set_text(("[-] " if page is current else "[+] ") + name)
+
+    def on_tab_switch(self, _nb, page, _num):
+        """Refresh the tab's data when it becomes visible."""
+        self._update_tab_marks(page)
+        if page is getattr(self, "network_page", None):
+            try:
+                self.refresh_wifi()
+                self.refresh_bt()
+            except Exception as e:
+                plog("tab switch network err %r" % e)
+        elif page is getattr(self, "customize_page", None):
+            try:
+                self.refresh_wall()
+                self.refresh_gestures()
+            except Exception as e:
+                plog("tab switch customize err %r" % e)
+
     def card_head(self, text, actions=None):
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
                        spacing=int(8 * self.scale))
@@ -1136,6 +1329,217 @@ class Panel(Gtk.Window):
         card.pack_start(row, False, False, 0)
         return card
 
+    # ---- gesture configuration card -------------------------------------
+    def gesture_card_ui(self):
+        """Every lisgd slot the tablet uses, with an action dropdown per row.
+
+        Unset slots show None; current gestures.json entries preselect their
+        action.  The switch mirrors the gestures-disabled marker file.
+        """
+        card = self.new_card()
+
+        self.gest_sw = Gtk.Switch()
+        self.gest_sw.set_active(not gestures_disabled())
+        self.gest_sw.set_halign(Gtk.Align.END)
+        self.gest_sw.set_valign(Gtk.Align.CENTER)
+        self.gest_sw.connect("state-set", self.on_gesture_switch)
+        card.pack_start(self.card_head("[+] Touch gestures", [self.gest_sw]),
+                        False, False, 0)
+
+        self.gest_status = Gtk.Label(label="")
+        self.gest_status.get_style_context().add_class("label-sub")
+        self.gest_status.set_xalign(0)
+        self.gest_status.set_line_wrap(True)
+        card.pack_start(self.gest_status, False, False, 0)
+
+        self.gest_combos = {}
+        sub = None
+        section = None
+        for sec, label, fingers, direction, edge in GESTURE_SLOTS:
+            if sec != section:
+                section = sec
+                sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+                sep.get_style_context().add_class("gesture-sep")
+                sep.set_margin_top(int(6 * self.scale))
+                sep.set_margin_bottom(int(2 * self.scale))
+                card.pack_start(sep, False, False, 0)
+                sub = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                              spacing=int(3 * self.scale))
+                sub.get_style_context().add_class("gesture-sub")
+                head = Gtk.Label(label=GESTURE_SECTION_TITLES[sec])
+                head.get_style_context().add_class("gesture-sub-head")
+                head.set_xalign(0)
+                sub.pack_start(head, False, False, 0)
+                card.pack_start(sub, False, False, 0)
+            row, combo = self.gesture_row(label, (fingers, direction, edge))
+            sub.pack_start(row, False, False, 0)
+            self.gest_combos[(fingers, direction, edge)] = combo
+        self.refresh_gestures()
+        return card
+
+    def gesture_row(self, label, slot):
+        """One gesture slot: direction label left, action dropdown right."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                      spacing=int(8 * self.scale))
+        row.get_style_context().add_class("gesture-row")
+        lbl = Gtk.Label(label=label)
+        lbl.set_xalign(0)
+        lbl.set_hexpand(True)
+        combo = Gtk.ComboBoxText()
+        combo.get_style_context().add_class("gesture-combo")
+        combo.set_halign(Gtk.Align.END)
+        combo.set_valign(Gtk.Align.CENTER)
+        combo.set_size_request(int(196 * self.scale), -1)
+        combo._gest_slot = slot
+        combo._gest_cmds = []
+        combo.connect("changed", self.on_gesture_action)
+        row.pack_start(lbl, True, True, 0)
+        row.pack_end(combo, False, False, 0)
+        return row, combo
+
+    def _gesture_text(self, active):
+        state = "disabled" if gestures_disabled() else "enabled"
+        return "%s \u00b7 %d/%d gesture slots set" % (
+            state, active, len(GESTURE_SLOTS))
+
+    def refresh_gestures(self):
+        """Mirror gestures.json into the dropdowns; unset slots show None."""
+        self._gest_loading = True
+        try:
+            items = load_gesture_file()
+            disabled = gestures_disabled()
+            self.gest_sw.set_active(not disabled)
+            set_count = 0
+            for _sec, _label, fingers, direction, edge in GESTURE_SLOTS:
+                combo = self.gest_combos.get((fingers, direction, edge))
+                if combo is None:
+                    continue
+                cmd = None
+                for g in items:
+                    if gesture_matches(g, fingers, direction, edge):
+                        cmd = g.get("cmd") or None
+                        break
+                if cmd:
+                    set_count += 1
+                self._fill_gesture_combo(combo, cmd)
+            self.gest_status.set_text(self._gesture_text(set_count))
+        except Exception as e:
+            plog("refresh gestures err %r" % e)
+        finally:
+            self._gest_loading = False
+
+    def _fill_gesture_combo(self, combo, cmd):
+        combo.remove_all()
+        names = [n for (n, _c) in GESTURE_ACTIONS]
+        cmds = [c for (_n, c) in GESTURE_ACTIONS]
+        idx = 0
+        launch_name = launch_cmd_name(cmd) if cmd else None
+        if cmd and launch_name is not None:
+            # Reuse the "Launch app..." row, relabelled with the chosen app.
+            idx = cmds.index(LAUNCH_SENTINEL)
+            names[idx] = "Launch: %s" % launch_name
+        elif cmd:
+            for i, c in enumerate(cmds):
+                if (c is not None and c != LAUNCH_SENTINEL
+                        and gesture_cmd_matches(c, cmd)):
+                    idx = i
+                    break
+            else:
+                # Keep an externally-set command visible instead of None.
+                names.append("Custom: %s" % cmd)
+                cmds.append(cmd)
+                idx = len(cmds) - 1
+        combo._gest_cmds = cmds
+        for i, name in enumerate(names):
+            combo.append(str(i), name)
+        combo.set_active(idx)
+
+    def on_gesture_action(self, combo):
+        if getattr(self, "_gest_loading", False):
+            return
+        slot = getattr(combo, "_gest_slot", None)
+        idx = combo.get_active()
+        cmds = getattr(combo, "_gest_cmds", [])
+        if slot is None or idx < 0 or idx >= len(cmds):
+            return
+        cmd = cmds[idx]
+        if cmd == LAUNCH_SENTINEL:
+            self._pick_launch_app(slot)
+            return
+        self._write_gesture_slot(slot, cmd)
+
+    def _pick_launch_app(self, slot):
+        """Open the app grid; write the chosen app or restore the dropdown."""
+        cmd = self.app_selector()
+        if not cmd:
+            # Rebuild from disk so the sentinel row isn't left selected.
+            GLib.idle_add(self.refresh_gestures)
+            return
+        self._write_gesture_slot(slot, cmd)
+        self.refresh_gestures()
+
+    def _write_gesture_slot(self, slot, cmd):
+        """Persist one slot; entries for other slots are kept untouched."""
+        fingers, direction, edge = slot
+        items = load_gesture_file()
+        kept, done = [], False
+        for g in items:
+            if gesture_matches(g, fingers, direction, edge):
+                if cmd and not done:
+                    ng = dict(g)
+                    ng["cmd"] = cmd
+                    ng.setdefault("distance", "*")
+                    ng.setdefault("mode", "R")
+                    kept.append(ng)
+                    done = True
+                # None (unset) and duplicate entries are dropped.
+            else:
+                kept.append(g)
+        if cmd and not done:
+            kept.append({
+                "fingers": fingers,
+                "dir": direction,
+                "edge": edge,
+                "distance": "*",
+                "mode": "R",
+                "cmd": cmd,
+            })
+        if not save_gesture_file(kept):
+            self.gest_status.set_text("could not save gestures.json")
+            return
+        active = sum(
+            1 for _s, _l, f, d, e in GESTURE_SLOTS
+            if any(gesture_matches(g, f, d, e) for g in kept))
+        self.gest_status.set_text(self._gesture_text(active))
+
+    def on_gesture_switch(self, _sw, state):
+        want = bool(state)
+        if getattr(self, "_gest_loading", False):
+            return False
+        if want == (not gestures_disabled()):
+            return False
+        self.gest_status.set_text("updating\u2026")
+
+        def work():
+            try:
+                os.makedirs(GEST_CFG_DIR, exist_ok=True)
+                if want:
+                    try:
+                        os.remove(GEST_DISABLED)
+                    except FileNotFoundError:
+                        pass
+                else:
+                    with open(GEST_DISABLED, "w") as f:
+                        f.write("disabled\n")
+                if os.path.exists(GEST_BIN):
+                    qrun([GEST_BIN, "start" if want else "stop"], timeout=20)
+            except Exception as e:
+                plog("gesture toggle err %r" % e)
+            GLib.idle_add(self.refresh_gestures)
+
+        self.bg(work)
+        return False
+
     # ---- fixed bottom action bar ---------------------------------------
     def action_tile(self, mark, name, sub, cb):
         b = Gtk.Button()
@@ -1185,9 +1589,9 @@ class Panel(Gtk.Window):
     # ---- startup / periodic refresh ------------------------------------
     def first_refresh(self):
         for fn in (self.refresh_wifi, self.refresh_bt, self.refresh_sinks,
-                   self.refresh_wall, self.refresh_streams,
-                   self.refresh_orientation, self.refresh_screen_block,
-                   self.refresh_zerotier):
+                   self.refresh_wall, self.refresh_gestures,
+                   self.refresh_streams, self.refresh_orientation,
+                   self.refresh_screen_block, self.refresh_zerotier):
             try:
                 fn()
             except Exception as e:
@@ -1767,62 +2171,341 @@ class Panel(Gtk.Window):
         self.bg(work)
 
     # ---- modal dialog (DESIGN.md structure) -----------------------------
+    def _modal_blur(self, w, h):
+        """Snapshot the panel and blur it by down/up-scaling.
+
+        Wayland compositors may refuse read-back; returning None makes the
+        overlay fall back to a plain dim layer.
+        """
+        try:
+            win = self.get_window()
+            if win is None or w < 8 or h < 8:
+                return None
+            pix = Gdk.pixbuf_get_from_window(win, 0, 0, w, h)
+            if pix is None:
+                return None
+            sw = max(1, w // 16)
+            sh = max(1, h // 16)
+            small = pix.scale_simple(sw, sh, GdkPixbuf.InterpType.BILINEAR)
+            if small is None:
+                return None
+            return small.scale_simple(w, h, GdkPixbuf.InterpType.BILINEAR)
+        except Exception as e:
+            plog("modal blur err %r" % e)
+            return None
+
     def modal(self, title, prompt, entry=False, ok_label="[+] OK"):
-        dlg = Gtk.Dialog(transient_for=self, modal=True)
-        dlg.set_decorated(False)
-        dlg.set_default_size(int(430 * self.scale), -1)
-        dlg.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
-        area = dlg.get_content_area()
-        area.set_spacing(int(10 * self.scale))
+        """In-window modal: centered on the panel, blurred/dimmed backdrop.
+
+        Built as an overlay instead of a toplevel Gtk.Dialog so sway cannot
+        place it off-centre and so the backdrop stays part of the panel
+        surface (true blur behind the card).
+        """
+        result = {"resp": Gtk.ResponseType.CANCEL, "text": None}
+        loop = GLib.MainLoop()
+
+        backdrop = Gtk.EventBox()
+        backdrop.set_visible_window(True)
+        backdrop.set_can_focus(True)
+        backdrop.set_events(Gdk.EventMask.BUTTON_PRESS_MASK |
+                            Gdk.EventMask.KEY_PRESS_MASK)
+        backdrop.get_style_context().add_class("modal-scrim")
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                       spacing=int(10 * self.scale))
+        card.get_style_context().add_class("modal-card")
+        card.set_halign(Gtk.Align.CENTER)
+        card.set_size_request(int(430 * self.scale), -1)
         for m in ("top", "bottom", "start", "end"):
-            getattr(area, "set_margin_" + m)(int(12 * self.scale))
+            getattr(card, "set_margin_" + m)(int(12 * self.scale))
+
+        ent = None
+
+        def finish(resp):
+            result["resp"] = resp
+            result["text"] = ent.get_text() if ent is not None else None
+            loop.quit()
 
         cancel = Gtk.Button(label="[x] Cancel")
         cancel.get_style_context().add_class("close")
-        cancel.connect("clicked", lambda *a: dlg.response(Gtk.ResponseType.CANCEL))
-        area.pack_start(self.card_head("[+] " + title, [cancel]),
+        cancel.connect("clicked", lambda *a: finish(Gtk.ResponseType.CANCEL))
+        card.pack_start(self.card_head("[+] " + title, [cancel]),
                         False, False, 0)
 
         lbl = Gtk.Label(label=prompt)
         lbl.get_style_context().add_class("label-sub")
         lbl.set_xalign(0)
         lbl.set_line_wrap(True)
-        area.pack_start(lbl, False, False, 0)
+        card.pack_start(lbl, False, False, 0)
 
-        ent = None
         if entry:
             ent = Gtk.Entry()
             ent.set_visibility(False)
             ent.set_input_purpose(Gtk.InputPurpose.PASSWORD)
             ent.set_placeholder_text("password")
             ent.connect("activate",
-                        lambda *a: dlg.response(Gtk.ResponseType.OK))
-            area.pack_start(ent, False, False, 0)
+                        lambda *a: finish(Gtk.ResponseType.OK))
+            card.pack_start(ent, False, False, 0)
 
         ok = Gtk.Button(label=ok_label)
         ok.get_style_context().add_class("btn-danger")
-        ok.connect("clicked", lambda *a: dlg.response(Gtk.ResponseType.OK))
-        area.pack_start(ok, False, False, 0)
+        ok.connect("clicked", lambda *a: finish(Gtk.ResponseType.OK))
+        card.pack_start(ok, False, False, 0)
 
-        dlg.show_all()
-        # Dim the panel behind the modal ("blur behind") so the password
-        # popup stands out and sits exactly at the center of the screen.
+        # Vertical spacers centre the card exactly in the panel window.
+        center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        center.set_hexpand(True)
+        center.set_vexpand(True)
+        top_sp = Gtk.Box()
+        top_sp.set_vexpand(True)
+        bot_sp = Gtk.Box()
+        bot_sp.set_vexpand(True)
+        center.pack_start(top_sp, True, True, 0)
+        center.pack_start(card, False, False, 0)
+        center.pack_start(bot_sp, True, True, 0)
+        backdrop.add(center)
+
+        alloc = self.get_allocation()
+        blur = self._modal_blur(alloc.width, alloc.height)
+
+        def on_draw(_w, cr):
+            if blur is not None:
+                try:
+                    Gdk.cairo_set_source_pixbuf(cr, blur, 0, 0)
+                    cr.paint()
+                except Exception:
+                    pass
+            return False
+
+        backdrop.connect("draw", on_draw)
+
+        def swallow(*_a):
+            return True
+        backdrop.connect("button-press-event", swallow)
+
+        def on_key(_w, ev):
+            if ev.keyval == Gdk.KEY_Escape:
+                finish(Gtk.ResponseType.CANCEL)
+                return True
+            return False
+        backdrop.connect("key-press-event", on_key)
+
+        self._modal_backdrop = backdrop
+        self._modal_card = card
+        self.overlay.add_overlay(backdrop)
+        self.overlay.set_overlay_pass_through(backdrop, False)
+        backdrop.show_all()
         try:
-            self.set_opacity(0.50)
+            Gtk.grab_add(backdrop)
         except Exception:
             pass
+        if ent is not None:
+            ent.grab_focus()
+        else:
+            backdrop.grab_focus()
         try:
-            resp = dlg.run()
+            loop.run()
         finally:
             try:
-                self.set_opacity(1.0)
+                Gtk.grab_remove(backdrop)
             except Exception:
                 pass
-            dlg.destroy()
-        val = ent.get_text() if ent is not None else None
+            self.overlay.remove(backdrop)
+            self._modal_backdrop = None
+            self._modal_card = None
+            backdrop.destroy()
         if entry:
-            return val if resp == Gtk.ResponseType.OK else None
-        return resp == Gtk.ResponseType.OK
+            return result["text"] if result["resp"] == Gtk.ResponseType.OK else None
+        return result["resp"] == Gtk.ResponseType.OK
+
+    def app_choices(self):
+        """(display name, Gio.AppInfo) pairs, deduped and sorted like appmenu."""
+        apps, seen = [], set()
+        try:
+            for a in Gio.AppInfo.get_all():
+                try:
+                    if not a.should_show():
+                        continue
+                except Exception:
+                    continue
+                name = a.get_display_name() or a.get_name()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                apps.append((name, a))
+        except Exception as e:
+            plog("app list err %r" % e)
+        apps.sort(key=lambda t: t[0].lower())
+        return apps
+
+    def _app_tile(self, name, app, finish):
+        """One app-grid tile (mirrors appmenu's .app-tile buttons)."""
+        b = Gtk.Button()
+        b.get_style_context().add_class("app-tile")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                      spacing=int(5 * self.scale))
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
+        img = Gtk.Image()
+        try:
+            icon = app.get_icon()
+        except Exception:
+            icon = None
+        if icon is not None:
+            img.set_from_gicon(icon, Gtk.IconSize.DIALOG)
+        else:
+            img.set_from_icon_name("application-x-executable",
+                                   Gtk.IconSize.DIALOG)
+        img.set_pixel_size(int(40 * self.scale))
+        img.set_halign(Gtk.Align.CENTER)
+        img.set_valign(Gtk.Align.CENTER)
+        lbl = Gtk.Label(label=name)
+        lbl.set_line_wrap(True)
+        lbl.set_max_width_chars(14)
+        lbl.set_justify(Gtk.Justification.CENTER)
+        lbl.set_xalign(0.5)
+        lbl.set_halign(Gtk.Align.CENTER)
+        lbl.get_style_context().add_class("appname")
+        box.pack_start(img, False, False, 0)
+        box.pack_start(lbl, False, False, 0)
+        b.add(box)
+        b.set_size_request(int(140 * self.scale), int(112 * self.scale))
+        b.connect("clicked", lambda *_a: finish(launch_cmd_for(app)))
+        return b
+
+    def app_selector(self):
+        """In-window app grid modal (mimics appmenu) for the Launch action.
+
+        Returns the gtk-launch command for the chosen app, or None on cancel.
+        """
+        choice = {"cmd": None}
+        loop = GLib.MainLoop()
+
+        def finish(cmd=None):
+            choice["cmd"] = cmd
+            loop.quit()
+
+        backdrop = Gtk.EventBox()
+        backdrop.set_visible_window(True)
+        backdrop.set_can_focus(True)
+        backdrop.set_events(Gdk.EventMask.BUTTON_PRESS_MASK |
+                            Gdk.EventMask.KEY_PRESS_MASK)
+        backdrop.get_style_context().add_class("modal-scrim")
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                       spacing=int(8 * self.scale))
+        card.get_style_context().add_class("modal-card")
+        card.set_halign(Gtk.Align.CENTER)
+        alloc = self.get_allocation()
+        width = max(int(320 * self.scale),
+                    alloc.width - int(40 * self.scale))
+        card.set_size_request(width, -1)
+        for m in ("top", "bottom", "start", "end"):
+            getattr(card, "set_margin_" + m)(int(12 * self.scale))
+
+        cancel = Gtk.Button(label="[x] Cancel")
+        cancel.get_style_context().add_class("close")
+        cancel.connect("clicked", lambda *a: finish(None))
+        card.pack_start(self.card_head("[+] Launch app", [cancel]),
+                        False, False, 0)
+
+        hint = Gtk.Label(label="Pick the app this gesture launches.")
+        hint.get_style_context().add_class("label-sub")
+        hint.set_xalign(0)
+        hint.set_line_wrap(True)
+        card.pack_start(hint, False, False, 0)
+
+        apps = self.app_choices()
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_overlay_scrolling(True)
+        sw.get_style_context().add_class("app-grid-scroll")
+        card.pack_start(sw, True, True, 0)
+
+        fb = Gtk.FlowBox()
+        fb.set_valign(Gtk.Align.START)
+        fb.set_selection_mode(Gtk.SelectionMode.NONE)
+        fb.set_max_children_per_line(4)
+        fb.set_min_children_per_line(4)
+        fb.set_row_spacing(int(8 * self.scale))
+        fb.set_column_spacing(int(8 * self.scale))
+        fb.set_homogeneous(True)
+        sw.add(fb)
+
+        if apps:
+            for name, app in apps:
+                fb.add(self._app_tile(name, app, finish))
+            rows = (len(apps) + 3) // 4
+            want = (rows * int(112 * self.scale)
+                    + max(0, rows - 1) * int(8 * self.scale)
+                    + int(6 * self.scale))
+            sw.set_size_request(-1, min(want, int(420 * self.scale)))
+        else:
+            sw.set_size_request(-1, int(80 * self.scale))
+            empty = Gtk.Label(label="No launchable apps found.")
+            empty.get_style_context().add_class("label-sub")
+            empty.set_xalign(0)
+            fb.add(empty)
+
+        # Vertical spacers centre the card exactly in the panel window.
+        center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        center.set_hexpand(True)
+        center.set_vexpand(True)
+        top_sp = Gtk.Box()
+        top_sp.set_vexpand(True)
+        bot_sp = Gtk.Box()
+        bot_sp.set_vexpand(True)
+        center.pack_start(top_sp, True, True, 0)
+        center.pack_start(card, False, False, 0)
+        center.pack_start(bot_sp, True, True, 0)
+        backdrop.add(center)
+
+        blur = self._modal_blur(alloc.width, alloc.height)
+
+        def on_draw(_w, cr):
+            if blur is not None:
+                try:
+                    Gdk.cairo_set_source_pixbuf(cr, blur, 0, 0)
+                    cr.paint()
+                except Exception:
+                    pass
+            return False
+
+        backdrop.connect("draw", on_draw)
+
+        def swallow(*_a):
+            return True
+        backdrop.connect("button-press-event", swallow)
+
+        def on_key(_w, ev):
+            if ev.keyval == Gdk.KEY_Escape:
+                finish(None)
+                return True
+            return False
+        backdrop.connect("key-press-event", on_key)
+
+        self._modal_backdrop = backdrop
+        self._modal_card = card
+        self.overlay.add_overlay(backdrop)
+        self.overlay.set_overlay_pass_through(backdrop, False)
+        backdrop.show_all()
+        try:
+            Gtk.grab_add(backdrop)
+        except Exception:
+            pass
+        backdrop.grab_focus()
+        try:
+            loop.run()
+        finally:
+            try:
+                Gtk.grab_remove(backdrop)
+            except Exception:
+                pass
+            self.overlay.remove(backdrop)
+            self._modal_backdrop = None
+            self._modal_card = None
+            backdrop.destroy()
+        return choice["cmd"]
 
     # ---- sliders / audio ------------------------------------------------
     def on_vol(self, value):

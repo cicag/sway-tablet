@@ -1,0 +1,19 @@
+#!/bin/sh
+# Toggle the swayview workspace overview.
+#
+# lisgd runs gesture commands with system(3), so a foreground swayview would
+# block the gesture daemon for as long as the overview is open. Detach it in
+# its own session instead.
+if pgrep -x swayview >/dev/null 2>&1; then
+  pkill -x swayview
+  exit 0
+fi
+
+SWAYVIEW=$(command -v swayview 2>/dev/null || true)
+[ -n "$SWAYVIEW" ] || SWAYVIEW="$HOME/.local/bin/swayview"
+if [ ! -x "$SWAYVIEW" ]; then
+  echo "swayview is not installed (run install.sh --with-swayview)" >&2
+  exit 1
+fi
+
+setsid "$SWAYVIEW" "$@" </dev/null >/dev/null 2>&1 &

@@ -10,4 +10,8 @@ fi
 export WAYLAND_DISPLAY
 : "${SWAYSOCK:=$(ls -t "$XDG_RUNTIME_DIR"/sway-ipc.*.sock 2>/dev/null | head -1)}"
 export SWAYSOCK
+# Prefer the Nuitka-compiled build when present (see nuitka-workspace/).
+if [ -x "$HOME/.local/bin/controlpanel.bin" ]; then
+  exec "$HOME/.local/bin/controlpanel.bin"
+fi
 exec python3 "$HOME/.local/bin/controlpanel.py"

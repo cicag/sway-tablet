@@ -55,11 +55,33 @@ window, label, button {
 }
 
 /* ---- containers ------------------------------------------------------- */
+.window {
+  background-color: #1e1e2e;
+}
 .box {
   background-color: #2a2b35;
   border: 1px solid rgba(205,214,244,0.12);
   border-radius: 4px;
   padding: 12px;
+}
+/* Overlay scrollbar: GTK3 draws the overlay-indicator widget in the theme
+ * colour (white on some distros). CSS selectors targeting .overlay-indicator
+ * or the scrollbar element do not override it — the theme engine wins. This
+ * is a known GTK3 limitation, not a panel bug. The 19 px strip on the right
+ * edge of scrolling tabs is the standard overlay indicator. */
+/* Notebook internals default to the theme (white) on some distros; force the
+ * panel background so no grey/white strip shows behind the tabs or pages. */
+notebook,
+notebook header,
+notebook header.top,
+notebook header.top tabs,
+notebook tabs,
+notebook .page,
+notebook .label,
+viewport.frame,
+.frame {
+  background-color: #1e1e2e;
+  color: #cdd6f4;
 }
 
 /* ---- buttons ---------------------------------------------------------- */
@@ -77,6 +99,20 @@ button:hover {
 button:active {
   background-color: %(accent_rgba_25)s;
   color: %(onacc)s;
+}
+.btn-mini {
+  background-image: none;
+  background-color: #2a2b35;
+  color: #cdd6f4;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+.btn-mini:hover {
+  background-color: %(accent_rgba_40)s;
 }
 
 /* default item buttons */
@@ -178,6 +214,109 @@ button:active {
   font-weight: 700;
 }
 
+/* ---- gesture sub-sections -------------------------------------------- */
+.gesture-sub {
+  background-color: transparent;
+  border: none;
+  padding: 2px 0 6px 0;
+}
+.gesture-sub-head {
+  font-size: 13px;
+  color: #cdd6f4;
+  font-weight: 700;
+  padding: 4px 0 2px 0;
+}
+.gesture-row {
+  background-color: transparent;
+  border: none;
+  padding: 2px 0;
+}
+/* Hairline rule above each gesture sub-section. */
+.gesture-sep {
+  background-color: rgba(205, 214, 244, 0.14);
+  border: none;
+  min-height: 1px;
+}
+/* Dark dropdown button (closed state). */
+.gesture-combo button {
+  background-image: none;
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+  border: 1px solid rgba(205, 214, 244, 0.18);
+  border-radius: 4px;
+  padding: 6px 10px;
+  min-height: 0;
+}
+.gesture-combo button:hover {
+  background-color: #2a2b35;
+  border-color: rgba(205, 214, 244, 0.30);
+}
+.gesture-combo button:active {
+  background-color: #2a2b35;
+}
+/* Force a symbolic arrow so the colour follows the dark theme even when the
+ * icon theme ships a raster chevron (which ignores `color` and stays light). */
+.gesture-combo arrow {
+  -gtk-icon-source: -gtk-icontheme("pan-down-symbolic");
+  -gtk-icon-style: symbolic;
+  -gtk-icon-shadow: none;
+  color: #cdd6f4;
+  min-width: 14px;
+  min-height: 14px;
+}
+.gesture-combo arrow:disabled {
+  color: rgba(205, 214, 244, 0.40);
+}
+/* Popup-menu scroll arrows should not fall back to a light asset either. */
+.gesture-combo menu arrow,
+menu.gesture-menu arrow {
+  -gtk-icon-shadow: none;
+  color: #cdd6f4;
+}
+/* Dark popup menu (the list that opens from the dropdown). */
+menu {
+  background-color: #1e1e2e;
+  border: 1px solid rgba(205, 214, 244, 0.18);
+  border-radius: 4px;
+  padding: 4px;
+}
+menu menuitem {
+  background-color: transparent;
+  color: #cdd6f4;
+  padding: 6px 10px;
+  min-height: 0;
+}
+menu menuitem:hover {
+  background-color: rgba(205, 214, 244, 0.12);
+  color: #cdd6f4;
+}
+menu menuitem:checked {
+  color: %(accent)s;
+}
+.gesture-combo menu,
+menu.gesture-menu {
+  background-color: #1e1e2e;
+  border: 1px solid rgba(205, 214, 244, 0.18);
+  border-radius: 4px;
+  padding: 4px;
+}
+.gesture-combo menu menuitem,
+menu.gesture-menu menuitem {
+  background-color: transparent;
+  color: #cdd6f4;
+  padding: 6px 10px;
+  min-height: 0;
+}
+.gesture-combo menu menuitem:hover,
+menu.gesture-menu menuitem:hover {
+  background-color: rgba(205, 214, 244, 0.12);
+  color: #cdd6f4;
+}
+.gesture-combo menu menuitem:checked,
+menu.gesture-menu menuitem:checked {
+  color: %(accent)s;
+}
+
 /* ---- misc ------------------------------------------------------------- */
 .vbox {
   background-color: transparent;
@@ -238,4 +377,137 @@ dialog, .dialog {
 dialog .content-area, dialog box {
   background-color: #1e1e2e;
   color: #cdd6f4;
+}
+
+/* ---- modal overlay ---------------------------------------------------- */
+/* In-window modal: the scrim covers the panel (over the blurred snapshot),
+ * the card is centred by Gtk.Overlay instead of by the compositor. */
+.modal-scrim {
+  background-color: rgba(12, 12, 20, 0.62);
+}
+.modal-card {
+  background-color: #26263a;
+  color: #cdd6f4;
+  border: 1px solid rgba(205, 214, 244, 0.22);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.65);
+}
+.modal-card .title,
+.modal-card .label-sub {
+  background-color: transparent;
+}
+.modal-card entry {
+  background-color: #1e1e2e;
+  border: 1px solid rgba(205, 214, 244, 0.18);
+  border-radius: 4px;
+  padding: 8px 12px;
+  min-height: 24px;
+}
+.modal-card entry:focus {
+  border-color: %(accent)s;
+}
+
+/* ---- app grid inside the Launch-app modal (mirrors appmenu) ----------- */
+.modal-card scrolledwindow,
+.modal-card viewport,
+.modal-card flowbox {
+  background-color: transparent;
+  border: none;
+}
+.app-tile {
+  background-image: none;
+  background-color: %(accent_rgba_25)s;
+  color: #cdd6f4;
+  border: 1px solid rgba(205, 214, 244, 0.12);
+  border-radius: 4px;
+  padding: 6px;
+}
+.app-tile:hover {
+  background-color: %(accent_rgba_40)s;
+}
+.app-tile:active {
+  background-color: %(accent)s;
+  color: %(onacc)s;
+}
+.app-tile:active .appname {
+  color: %(onacc)s;
+}
+.app-tile .appname {
+  font-size: 12px;
+  color: #cdd6f4;
+}
+
+/* ---- tab bar ---------------------------------------------------------- */
+/* Overlay scrollbar: GTK3 draws it in the theme colour (white on some
+ * distros), which shows as a bright strip down the right edge. */
+.scrollbar {
+  background-color: transparent;
+}
+.scrollbar trough {
+  background-color: transparent;
+}
+.scrollbar trough highlight {
+  background-color: transparent;
+}
+.scrollbar thumb {
+  background-color: rgba(205, 214, 244, 0.35);
+  border-radius: 4px;
+  min-width: 6px;
+}
+.scrollbar thumb:hover {
+  background-color: rgba(205, 214, 244, 0.55);
+}
+scrollbar {
+  background-color: transparent;
+}
+scrollbar trough {
+  background-color: transparent;
+}
+scrollbar button {
+  background-image: none;
+  background-color: transparent;
+  min-width: 0;
+  min-height: 0;
+}
+scrollbar button:hover {
+  background-color: transparent;
+}
+scrollbar thumb {
+  background-color: rgba(205, 214, 244, 0.35);
+  border-radius: 4px;
+  min-width: 6px;
+}
+scrollbar thumb:hover {
+  background-color: rgba(205, 214, 244, 0.55);
+}
+notebook {
+  background-color: transparent;
+}
+notebook header.top {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+}
+notebook header.top tab {
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid transparent;
+  padding: 6px 14px;
+  min-width: 0;
+}
+notebook header.top tab:checked {
+  border-bottom: 2px solid %(accent)s;
+}
+notebook header.top tab:checked label {
+  color: %(accent)s;
+  font-weight: 700;
+}
+notebook header.top tab label {
+  color: #a6adc8;
+  font-size: 14px;
+}
+notebook tabs {
+  background-color: transparent;
 }

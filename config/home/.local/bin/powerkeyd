@@ -7,6 +7,9 @@ OFF_DELAY = 300  # 5 minutes shutdown
 # like a power key). Override with POWERKEY_OUTPUT / POWERKEY_DEVICE.
 OUTPUT = os.environ.get("POWERKEY_OUTPUT", "")
 DEVNAME = os.environ.get("POWERKEY_DEVICE", "")
+# Works for both the source script and a Nuitka-compiled binary.
+BIN_DIR = os.path.dirname(os.path.realpath(
+    "/proc/self/exe" if "__compiled__" in globals() else __file__))
 KEY_POWER = 116
 EVENT_SIZE = struct.calcsize("llHHi")
 
@@ -137,7 +140,7 @@ def long_action():
     cancel_poweroff()
     if not dpms_on():
         run(["swaymsg", "output", OUTPUT, "dpms", "on"])
-    menu = os.path.join(os.path.dirname(os.path.abspath(__file__)), "powermenu")
+    menu = os.path.join(BIN_DIR, "powermenu")
     try:
         if subprocess.run(["pgrep", "-f", menu],
                           stdout=subprocess.DEVNULL).returncode == 0:

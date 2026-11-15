@@ -1,0 +1,36 @@
+# swayview workspace overview - tablet dark theme.
+#
+# On sway >= 1.12 windows show live contents; on older sway they are drawn
+# as labelled tiles. accent-update rewrites the accent colors on login.
+
+thumbnails: true
+
+fonts:
+  app:
+    family: "sans-serif"
+    size: 14
+  title:
+    family: "sans-serif"
+    size: 12
+
+colors:
+  backdrop: "#101216e6"
+  output_name: "#8a93a5"
+  workspace:
+    fill: "#16181d"
+    label: "#cdd6f4"
+    selected: "#8c272e"
+    urgent: "#900000"
+  window:
+    normal:
+      border: "#313244"
+      background: "#181825"
+      text: "#a6adc8"
+    selected:
+      border: "#8c272e"
+      background: "#313244"
+      text: "#cdd6f4"
+    urgent:
+      border: "#f38ba8"
+      background: "#900000"
+      text: "#ffffff"

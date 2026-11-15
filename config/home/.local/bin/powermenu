@@ -13,6 +13,10 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 
+# Works for both the source script and a Nuitka-compiled binary.
+BIN_DIR = os.path.dirname(os.path.realpath(
+    "/proc/self/exe" if "__compiled__" in globals() else __file__))
+
 
 def load_accent():
     p = os.path.join(os.path.expanduser("~"), ".config", "sway", "accent")
@@ -39,8 +43,7 @@ def hex_to_rgba(c, a):
 
 
 def load_css():
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "gtk-theme.css")
+    path = os.path.join(BIN_DIR, "gtk-theme.css")
     return (open(path).read() % {
         "accent": ACCENT,
         "onacc": ONACC,

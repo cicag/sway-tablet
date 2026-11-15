@@ -65,7 +65,8 @@ if [ ! -f "$HOME/.config/swaytablet/screen-blocked" ]; then
 fi
 
 # Touchscreen gestures (lisgd). Disabled when gestures-disabled file exists.
-# Set GESTURE_DEVICE per device (e.g. /dev/input/event2) if auto-detect fails.
+# Auto-detects the touch device via libinput; GESTURE_DEVICE in /etc/environment
+# is only trusted if libinput reports that path as a touch device.
 [ -x "$BIN/sway-tablet-gestures" ] && "$BIN/sway-tablet-gestures" start &
 
 export TERMINAL=alacritty

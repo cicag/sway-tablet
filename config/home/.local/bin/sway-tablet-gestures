@@ -7,11 +7,143 @@ import sys
 import time
 from shutil import which
 
+# Path to this program. In a Nuitka-compiled binary __file__ still points at the
+# original source, so use /proc/self/exe for the self-spawn below.
+SELF = os.path.realpath(
+    "/proc/self/exe" if "__compiled__" in globals() else __file__)
+
 CFG = os.path.join(os.path.expanduser("~"), ".config", "swaytablet")
 DISABLED = os.path.join(CFG, "gestures-disabled")
 PIDFILE = os.path.join(CFG, "gestures-manager.pid")
 ORIENT_FILE = os.path.join(CFG, "gestures-orient.json")
+GEST_FILE = os.path.join(CFG, "gestures.json")
 LOGFILE = "/tmp/sway-tablet-gestures.log"
+
+# Human-readable names for each lisgd gesture direction. The canonical
+# (visual) frame is used: "left→right" means swipe from the left edge toward
+# the right, regardless of screen rotation (lisgd -o compensates).
+DIR_NAMES = {
+    "LR": "left→right",
+    "RL": "right→left",
+    "DU": "down→up",
+    "UD": "up→down",
+    "DLUR": "bottom-left→top-right",
+    "DRUL": "bottom-right→top-left",
+    "URDL": "top-right→bottom-left",
+    "ULDR": "top-left→bottom-right",
+}
+EDGE_NAMES = {
+    "*": "anywhere",
+    "N": "anywhere",
+    "L": "left edge",
+    "R": "right edge",
+    "T": "top edge",
+    "B": "bottom edge",
+    "TL": "top-left corner",
+    "TR": "top-right corner",
+    "BL": "bottom-left corner",
+    "BR": "bottom-right corner",
+}
+DIST_NAMES = {"*": "any distance", "S": "short", "M": "medium", "L": "long"}
+MODE_NAMES = {"R": "on release", "P": "while held"}
+
+# All gesture directions lisgd recognises (see lisgd(1)). Listed here so the
+# config UI and the validator can present/accept the full set.
+GESTURE_DIRS = ("LR", "RL", "DU", "UD", "DLUR", "DRUL", "URDL", "ULDR")
+GESTURE_EDGES = ("*", "N", "L", "R", "T", "B", "TL", "TR", "BL", "BR")
+GESTURE_DIST = ("*", "S", "M", "L")
+GESTURE_MODES = ("R", "P")
+
+# Every direction lisgd recognises, offered as a choice in the [+] Add row.
+ADDABLE_DIRS = [
+    ("LR", "left→right"),
+    ("RL", "right→left"),
+    ("DU", "down→up"),
+    ("UD", "up→down"),
+    ("DLUR", "bottom-left→top-right"),
+    ("DRUL", "bottom-right→top-left"),
+    ("URDL", "top-right→bottom-left"),
+    ("ULDR", "top-left→bottom-right"),
+]
+
+
+def _gesture_desc(g):
+    """A plain-language description of one gesture spec."""
+    return "%d-finger %s, %s, %s" % (
+        g.get("fingers", 1),
+        DIR_NAMES.get(g.get("dir", ""), g.get("dir", "")),
+        EDGE_NAMES.get(g.get("edge", "*"), g.get("edge", "*")),
+        DIST_NAMES.get(g.get("distance", "*"), g.get("distance", "*")),
+    )
+
+# The default gesture set shipped with the panel (3-finger swipes in the
+# canonical visual frame). Written to GEST_FILE on first run.
+DEFAULT_GESTURES = [
+    {"fingers": 3, "dir": "LR", "edge": "*", "distance": "*", "mode": "R",
+     "cmd": "swaymsg workspace number 1"},
+    {"fingers": 3, "dir": "RL", "edge": "*", "distance": "*", "mode": "R",
+     "cmd": "swaymsg workspace number 2"},
+    {"fingers": 3, "dir": "UD", "edge": "*", "distance": "*", "mode": "R",
+     "cmd": "swaymsg kill"},
+    {"fingers": 3, "dir": "DU", "edge": "*", "distance": "*", "mode": "R",
+     "cmd": "swaymsg fullscreen toggle"},
+]
+
+
+def _annotate(g):
+    """Attach a plain-language description to a gesture dict (in place)."""
+    if "desc" not in g:
+        g["desc"] = "%d-finger %s, %s, %s" % (
+            g.get("fingers", 1),
+            DIR_NAMES.get(g.get("dir", ""), g.get("dir", "")),
+            EDGE_NAMES.get(g.get("edge", "*"), g.get("edge", "*")),
+            DIST_NAMES.get(g.get("distance", "*"), g.get("distance", "*")),
+        )
+    return g
+
+
+def load_gestures():
+    """Read the gesture list from GEST_FILE, writing defaults on first run."""
+    try:
+        with open(GEST_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return [_annotate(g) for g in data if validate_gesture(g)]
+    except Exception:
+        pass
+    try:
+        with open(GEST_FILE, "w") as f:
+            json.dump([_annotate(g) for g in DEFAULT_GESTURES], f, indent=2)
+    except Exception:
+        pass
+    return [_annotate(dict(g)) for g in DEFAULT_GESTURES]
+
+
+def save_gestures(gestures):
+    clean = []
+    for g in gestures:
+        if not validate_gesture(g):
+            continue
+        g = dict(g)
+        _annotate(g)
+        clean.append(g)
+    with open(GEST_FILE, "w") as f:
+        json.dump(clean, f, indent=2)
+
+
+def validate_gesture(g):
+    """Reject malformed entries so a bad config can't crash lisgd."""
+    try:
+        assert isinstance(g, dict)
+        assert isinstance(g.get("fingers"), int) and g["fingers"] >= 1
+        assert g.get("dir") in GESTURE_DIRS
+        assert g.get("edge") in GESTURE_EDGES
+        assert g.get("distance") in GESTURE_DIST
+        assert g.get("mode") in GESTURE_MODES
+        assert isinstance(g.get("cmd"), str) and g["cmd"].strip()
+    except Exception:
+        return False
+    return True
 
 # Sway output transform -> lisgd -o orientation (0-3).
 # lisgd rotates gesture directions by this many 90-degree steps to compensate
@@ -78,9 +210,31 @@ def sway_output_transform():
     return "normal"
 
 
+def _is_touch_device(dev):
+    """True if libinput reports dev as having touch capability."""
+    if not dev:
+        return False
+    out = run(["libinput", "list-devices"], timeout=8)
+    cur = ""
+    for line in out.splitlines():
+        if line.startswith("Kernel:"):
+            cur = line.split(":", 1)[1].strip()
+        if cur == dev and "Capabilities:" in line and "touch" in line:
+            return True
+    return False
+
+
 def detect_device():
+    # Prefer the stable udev symlink if it exists; udev guarantees it points
+    # at the touchscreen regardless of how the kernel numbers eventN.
+    stable = "/dev/touchscreen-silead"
+    if os.path.exists(stable):
+        return stable
     dev = os.environ.get("GESTURE_DEVICE") or os.environ.get("TOUCH_DEVICE") or ""
-    if dev:
+    # An env override is only trusted if libinput actually calls it a touch
+    # device; a stale GESTURE_DEVICE pointing at gpio-keys would otherwise
+    # make lisgd die with "Couldn't bind event from dev filesystem".
+    if dev and _is_touch_device(dev):
         return dev
     out = run(["libinput", "list-devices"], timeout=8)
     cur_dev = ""
@@ -92,19 +246,42 @@ def detect_device():
     return ""
 
 
-def lisgd_cmd(dev, transform, to_o):
+def output_geometry():
+    """Logical (post-rotation) screen size of the primary output."""
+    out = run(["swaymsg", "-t", "get_outputs"])
+    try:
+        data = json.loads(out or "[]")
+    except Exception:
+        return None
+    name = os.environ.get("OUTPUT_NAME") or os.environ.get("GESTURE_OUTPUT")
+    for o in data:
+        if name and o.get("name") != name:
+            continue
+        mode = o.get("current_mode") or {}
+        w, h = mode.get("width"), mode.get("height")
+        if w and h:
+            return int(w), int(h)
+    return None
+
+
+def lisgd_cmd(dev, transform, to_o, gestures):
     o = to_o.get(transform, 0)
     # Gestures defined once in canonical (visual) frame; lisgd -o compensates.
     # visual left->right = workspace 1, right->left = workspace 2,
     # up->down = close, down->up = fullscreen toggle.
-    cmd = [
-        "lisgd", "-d", dev, "-o", str(o),
-        "-g", "3,LR,*,*,R,swaymsg workspace number 1",
-        "-g", "3,RL,*,*,R,swaymsg workspace number 2",
-        "-g", "3,UD,*,*,R,swaymsg kill",
-        "-g", "3,DU,*,*,R,swaymsg fullscreen toggle",
-    ]
-    log(f"transform={transform} -o={o} cmd={cmd}")
+    # -w/-h give lisgd the screen size so it does not need $DISPLAY or
+    # $WAYLAND_DISPLAY (which the manager does not pass to the child).
+    geo = output_geometry()
+    cmd = ["lisgd", "-d", dev, "-o", str(o)]
+    for g in gestures:
+        cmd += [
+            "-g",
+            "%d,%s,%s,%s,%s,%s" % (g["fingers"], g["dir"], g["edge"],
+                                   g["distance"], g["mode"], g["cmd"]),
+        ]
+    if geo:
+        cmd += ["-w", str(geo[0]), "-h", str(geo[1])]
+    log(f"transform={transform} -o={o} geo={geo} n_gestures={len(gestures)} cmd={cmd}")
     return cmd
 
 
@@ -152,6 +329,8 @@ def daemon():
     child = None
     last_cmd = None
     last_orient_mtime = None
+    last_dev = None
+    last_gest_mtime = None
 
     def cleanup(*_a):
         kill_lisgd()
@@ -180,20 +359,39 @@ def daemon():
             time.sleep(2)
             continue
 
+        # Re-detect the touchscreen device each loop: libinput can report a
+        # different event number across reboots, and the cached one here is
+        # what makes lisgd die with "Couldn't bind event from dev filesystem".
+        dev = detect_device()
+        if not dev or not os.path.exists(dev):
+            kill_lisgd()
+            child = None
+            last_cmd = None
+            time.sleep(2)
+            continue
+
         to_o = load_transform_to_o()
         try:
             orient_mtime = os.path.getmtime(ORIENT_FILE)
         except Exception:
             orient_mtime = None
+        try:
+            gest_mtime = os.path.getmtime(GEST_FILE)
+        except Exception:
+            gest_mtime = None
         tx = sway_output_transform()
-        cmd = lisgd_cmd(dev, tx, to_o)
+        gestures = load_gestures()
+        cmd = lisgd_cmd(dev, tx, to_o, gestures)
 
-        # Restart if lisgd died, args changed (transform/orientation), or override updated.
+        # Restart if lisgd died, args changed (transform/orientation/gestures),
+        # or the device or override changed.
         need_restart = (
             child is None
             or child.poll() is not None
             or cmd != last_cmd
+            or dev != last_dev
             or orient_mtime != last_orient_mtime
+            or gest_mtime != last_gest_mtime
         )
         if need_restart:
             kill_lisgd()
@@ -203,7 +401,9 @@ def daemon():
                     cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
                 last_cmd = cmd
+                last_dev = dev
                 last_orient_mtime = orient_mtime
+                last_gest_mtime = gest_mtime
             except Exception as e:
                 log(f"lisgd start failed: {e}")
                 child = None
@@ -227,9 +427,13 @@ def start():
                 os.remove(PIDFILE)
             except Exception:
                 pass
-    # Spawn manager detached
+    # Spawn manager detached. Use the executable itself (works for both the
+    # script and a compiled binary); fall back to the interpreter if needed.
+    cmd = [SELF, "_daemon"]
+    if not os.access(SELF, os.X_OK):
+        cmd = [sys.executable, SELF, "_daemon"]
     subprocess.Popen(
-        [sys.executable, os.path.abspath(__file__), "_daemon"],
+        cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
@@ -257,6 +461,31 @@ def status():
     tx = sway_output_transform()
     to_o = load_transform_to_o()
     print("transform=%s -o=%d" % (tx, to_o.get(tx, 0)))
+    print("device=%s" % detect_device())
+    print("gestures:")
+    for g in load_gestures():
+        print("  %d,%s,%s,%s,%s -> %s" % (g["fingers"], g["dir"], g["edge"],
+                                         g["distance"], g["mode"], g["cmd"]))
+    return 0
+
+
+def gestures_export():
+    """Print the current gesture list as JSON (for the control panel)."""
+    print(json.dumps(load_gestures(), indent=2))
+    return 0
+
+
+def gestures_import():
+    """Replace the gesture list from stdin JSON (set by the control panel)."""
+    try:
+        data = json.load(sys.stdin)
+    except Exception as e:
+        log("gestures import failed: %r" % (e,))
+        return 1
+    if not isinstance(data, list) or not all(validate_gesture(g) for g in data):
+        log("gestures import rejected: malformed entry")
+        return 1
+    save_gestures(data)
     return 0
 
 
@@ -284,9 +513,14 @@ def main():
         return status()
     if cmd == "toggle":
         return toggle()
+    if cmd == "gestures-export":
+        return gestures_export()
+    if cmd == "gestures-import":
+        return gestures_import()
     if cmd == "_daemon":
         return daemon()
-    print("usage: %s {start|stop|toggle|status}" % sys.argv[0], file=sys.stderr)
+    print("usage: %s {start|stop|toggle|status|gestures-export|gestures-import}"
+          % sys.argv[0], file=sys.stderr)
     return 1
 
 
