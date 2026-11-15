@@ -34,7 +34,7 @@
     "exec": "$HOME/.local/bin/waybar-app-state.sh org.swaytablet.appmenu Apps",
     "return-type": "json",
     "interval": 1,
-    "on-click": "$HOME/.local/bin/waybar-app-toggle.sh org.swaytablet.appmenu python3 $HOME/.local/bin/appmenu.py"
+    "on-click": "$HOME/.local/bin/waybar-app-toggle.sh org.swaytablet.appmenu $HOME/.local/bin/appmenu"
   },
   "custom/ws1": {
     "format": "[{}]",
