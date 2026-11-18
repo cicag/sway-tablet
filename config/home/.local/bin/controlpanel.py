@@ -59,6 +59,7 @@ GESTURE_ACTIONS = (
     ("Close window", "swaymsg kill"),
     ("Fullscreen toggle", "swaymsg fullscreen toggle"),
     ("Workspace overview", "$HOME/.local/bin/swayview-toggle"),
+    ("App menu", "$HOME/.local/bin/appmenu"),
     ("Toggle keyboard", "$HOME/.local/bin/waybar-kbd.sh"),
     ("Launch app\u2026", LAUNCH_SENTINEL),
 )

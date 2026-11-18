@@ -1,17 +1,11 @@
 FROM debian:13-slim
 
+# Optional example toolchain image. src/build.sh bind-mounts the sources and
+# the output directory, then compiles inside this container.
+
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libc6-dev libjansson-dev \
- && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends gcc libc6-dev libjansson-dev \
+  && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
-COPY powerkeyd.c sway-tablet-gestures.c ./
-
-# Static jansson keeps the target free of a libjansson runtime dependency.
-RUN gcc -O2 -march=x86-64-v2 -Wall -Wextra -o powerkeyd powerkeyd.c \
-        -Wl,-Bstatic -ljansson -Wl,-Bdynamic \
- && gcc -O2 -march=x86-64-v2 -Wall -Wextra -o sway-tablet-gestures \
-        sway-tablet-gestures.c \
-        -Wl,-Bstatic -ljansson -Wl,-Bdynamic
-
+WORKDIR /src
 CMD ["/bin/true"]

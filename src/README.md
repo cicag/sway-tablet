@@ -5,11 +5,10 @@
 | Implementation | Location | Installed by default |
 |---|---|---|
 | Python | `config/home/.local/bin/` | yes |
-| C | `src/*.c`, built into `/tmp` | no |
+| C | `src/*.c`, built into `src/build/` | no |
 
 The Python versions are the portable default and work on any machine with
-`python3`. The C versions are a 1:1 replacement for low-memory devices: they
-do the same jobs with a fraction of the resident memory.
+`python3`. The C versions are a 1:1 replacement. Maybe oneday, decided to make this one as default.
 
 Measured on the LP-W841 tablet (PSS):
 
@@ -18,40 +17,52 @@ Measured on the LP-W841 tablet (PSS):
 | `powerkeyd` | 9,220 kB | 226 kB |
 | `sway-tablet-gestures` | ~9,500 kB | 257 kB |
 
-Both C binaries are self-contained apart from libc: `jansson` is linked
-statically, so the target does not need extra libraries.
-
 ## Build
 
-The build runs inside Debian 13 (the tablet's release) so the binaries match
-the target's glibc. `src/build.sh` uses Docker, but the result is a plain ELF
-binary — Docker is only needed on the build machine.
+`src/build.sh` compiles both daemons into `src/build/`. The directory is
+created if it does not exist, so the output is ready to deploy right away:
 
 ```sh
-./src/build.sh                    # -> /tmp/sway-tablet-bin/
-./src/build.sh /path/to/output    # custom output directory
+mkdir -p src/build                 # optional; build.sh does this too
+./src/build.sh                     # -> src/build/powerkeyd
+                                   #    src/build/sway-tablet-gestures
+./src/build.sh /path/to/output     # custom output directory
 ```
 
-Binaries are deliberately written outside the repo. `config/` stays a pure
-copy of deployable files, and `src/` never contains build output.
+For a native build you need a C compiler and `libjansson-dev` (plus libc
+headers). Use whatever distro, compiler or container you like — for example
+Debian with `apt install gcc libc6-dev libjansson-dev`.
+
+`Dockerfile.debian13` is just the environment used for the original tablet; use
+it as example. The normal build above does not use Docker
+at all. If that image happens to fit your target, you can use it — `build.sh`
+bind-mounts `src/` and the output directory into the container, so the binaries
+land straight in `build/` (or your custom output directory):
+
+```sh
+./src/build.sh --docker                    # same src/build output, Debian 13 container
+./src/build.sh --docker /path/to/output    # custom output directory
+```
 
 Files:
 
 | File | Role |
 |---|---|
-| `Dockerfile.debian13` | Debian 13 toolchain with `libjansson-dev` |
-| `build.sh` | builds both daemons and extracts them to `/tmp` |
+| `build.sh` | builds both daemons into `src/build/` |
 | `powerkeyd.c` | power-button daemon (short press = screen, long press = dialog) |
 | `sway-tablet-gestures.c` | `lisgd` manager (gestures, rotation, device detection) |
+| `Dockerfile.debian13` | optional example toolchain image (Debian 13 + `libjansson-dev`); sources and output are bind-mounted |
 
 ## Install on a device
 
 ### With the installer
 
+`install.sh --c-daemons` reads `src/build/` by default:
+
 ```sh
 ./src/build.sh
 ./install.sh --c-daemons
-./install.sh --c-daemons --c-bin-dir /tmp/sway-tablet-bin
+./install.sh --c-daemons --c-bin-dir /path/to/output   # custom build dir
 ```
 
 `install.sh` first deploys the Python scripts as usual, then replaces
@@ -60,55 +71,3 @@ Both files are checked for the ELF magic before anything is copied, so a
 missing or wrong binary aborts the install.
 
 The flag is opt-in: a plain `./install.sh` keeps the Python daemons.
-
-### With the deploy helper
-
-`src/deploy.sh` installs only the two binaries, locally or over ssh:
-
-```sh
-# local user
-./src/deploy.sh --restart
-
-# another local home
-./src/deploy.sh --home /home/alice --restart
-
-# remote device
-./src/deploy.sh --host mii@192.168.1.35 --restart
-
-# dry run
-./src/deploy.sh --host mii@192.168.1.35 --dry-run
-```
-
-Options:
-
-| Option | Default | Meaning |
-|---|---|---|
-| `--bin-dir DIR` | `/tmp/sway-tablet-bin` | where `build.sh` put the binaries |
-| `--home DIR` | `$HOME` (local or remote) | target home directory |
-| `--host USER@HOST` | — | copy over ssh instead of installing locally |
-| `--restart` | off | stop the old daemons and start the new ones |
-| `--dry-run` | off | print the commands without running them |
-
-`--restart` finds the session socket itself (`XDG_RUNTIME_DIR`, the first
-`wayland-*` socket) so it also works from a plain ssh shell. If the
-`~/.config/swaytablet/gestures-disabled` marker exists, `sway-tablet-gestures
-start` stays disabled, exactly like the autostart path.
-
-## After a plain install
-
-`install.sh` always writes the Python scripts first. Re-running it without
-`--c-daemons` reverts the daemons to Python; run `src/deploy.sh --restart`
-(or `install.sh --c-daemons`) afterwards to switch back to C.
-
-## Verify
-
-```sh
-file ~/.local/bin/powerkeyd ~/.local/bin/sway-tablet-gestures
-sha256sum ~/.local/bin/powerkeyd ~/.local/bin/sway-tablet-gestures
-~/.local/bin/sway-tablet-gestures status
-pgrep -ax powerkeyd
-pgrep -ax sway-tablet-gestures
-```
-
-`powerkeyd` logs to `/tmp/powerkeyd.log` and needs read access to
-`/dev/input/event*` (see the Permissions section in the main README).

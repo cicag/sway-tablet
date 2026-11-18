@@ -7,8 +7,8 @@
 #                 [--with-swayview] [--c-daemons [--c-bin-dir DIR]]
 #
 # Python daemons are the default. --c-daemons installs the prebuilt C
-# binaries from --c-bin-dir (default /tmp/sway-tablet-bin) instead; build
-# them first with src/build.sh (see src/README.md).
+# binaries from --c-bin-dir (default src/build) instead; build them first
+# with src/build.sh (see src/README.md).
 set -eu
 
 REPO=$(cd "$(dirname "$0")" && pwd)
@@ -18,7 +18,7 @@ DRY_RUN=0
 RELOAD=1
 WITH_SWAYVIEW=0
 WITH_C=0
-C_BIN_DIR=/tmp/sway-tablet-bin
+C_BIN_DIR=$REPO/src/build
 
 while [ $# -gt 0 ]; do
     case "$1" in

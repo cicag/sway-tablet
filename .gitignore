@@ -5,4 +5,5 @@ __pycache__/
 nuitka-workspace
 src/powerkeyd
 src/sway-tablet-gestures
+src/build/
 src/*.o

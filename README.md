@@ -1,9 +1,8 @@
 # sway-tablet
 
-Touch-first **sway** desktop for small tablets — dotfiles, helper scripts and the
-waybar/on-screen-keyboard setup.
+Touch-first **sway** desktop for small tablets — dotfiles, helper scripts and the waybar/on-screen-keyboard setup.
 
-Originally written for the [Wearness LP-W841](https://github.com/cicag/lp-w841_linux) (Intel Atom Z3735, 1 GB RAM, 800x1280), but the configuration is **device agnostic**: paths are relative to `$HOME`, and the hardware-specific parts (touchscreen mapping, backlight device, output name) are auto-detected or left commented out.
+Originally written for [Wearness LP-W841](https://github.com/cicag/lp-w841_linux) (Intel Atom Z3735, 1 GB RAM, 800x1280), but the configuration is **device agnostic**: paths are relative to `$HOME`, and the hardware-specific parts (touchscreen mapping, backlight device, output name) are auto-detected or left commented out.
 
 | | |
 |---|---|
@@ -24,7 +23,7 @@ is a straight copy:
 ./install.sh --user alice    # deploy for another user
 ./install.sh --dry-run       # only show what would change
 ./install.sh --with-swayview # also install the workspace overview binary
-./install.sh --c-daemons     # use prebuilt C daemons instead of Python (low RAM)
+./install.sh --c-daemons     # use prebuilt C daemons instead of Python
 ```
 
 Manual equivalent:
@@ -74,7 +73,7 @@ Installed on the device (not provided by this repo):
 | Script | Role |
 |---|---|
 | `accent-update` | derives an accent color from the wallpaper, rewrites `accent.conf` and the waybar stylesheet |
-| `appmenu` | fullscreen GTK3 application grid, launched from the waybar |
+| `appmenu` | fullscreen GTK3 application grid, launched from the waybar; also offered in the gesture action dropdown as `App menu` |
 | `controlpanel` | fullscreen GTK3 settings panel |
 | `orientation-daemon` | background accelerometer polling daemon that auto-rotates the sway output when orientation is unlocked (configured via env vars) |
 | `powerkeyd` | power button: short press toggles the screen, long press shows the power dialog |
@@ -130,10 +129,7 @@ Kept out of the shipped configuration on purpose — enable them per machine:
 
 Captured on the device with `grim`.
 
-| Desktop (wallpaper + waybar + on-screen keyboard) | Power menu | App grid | Controlpanel (device) |
-|---|---|---|
-| ![desktop](screenshots/01-desktop.png) | ![power menu](screenshots/03-powermenu.png) | ![app grid](screenshots/04-appmenu.png) | ![Device tab](screenshots/02-controlpanel-device.png) |
-
-| Controlpanel (network) | Controlpanel (customization) | Controlpanel (about) | |
-|---|---|---|
-| ![Network tab](screenshots/02-controlpanel-network.png) | ![Customize tab](screenshots/02-controlpanel-customize.png) | ![About tab](screenshots/02-controlpanel-about.png) | |
+| | | | |
+|---|---|---|---|
+| **Desktop**<br>![desktop](screenshots/01-desktop.png) | **Power menu**<br>![power menu](screenshots/03-powermenu.png) | **App grid**<br>![app grid](screenshots/04-appmenu.png) | **Control panel — Device**<br>![Device tab](screenshots/02-controlpanel-device.png) |
+| **Control panel — Network**<br>![Network tab](screenshots/02-controlpanel-network.png) | **Control panel — Customize**<br>![Customize tab](screenshots/02-controlpanel-customize.png) | **Control panel — About**<br>![About tab](screenshots/02-controlpanel-about.png) | |
