@@ -3,12 +3,7 @@
 Touch-first **sway** desktop for small tablets — dotfiles, helper scripts and the
 waybar/on-screen-keyboard setup.
 
-Originally written for the
-[Wearness LP-W841](https://github.com/cicag/lp-w841_linux) (Intel Atom Z3735,
-1 GB RAM, 800x1280), but the configuration is **device agnostic**:
-paths are relative to `$HOME`, and the hardware-specific parts (touchscreen
-mapping, backlight device, output name) are auto-detected or left commented
-out.
+Originally written for the [Wearness LP-W841](https://github.com/cicag/lp-w841_linux) (Intel Atom Z3735, 1 GB RAM, 800x1280), but the configuration is **device agnostic**: paths are relative to `$HOME`, and the hardware-specific parts (touchscreen mapping, backlight device, output name) are auto-detected or left commented out.
 
 | | |
 |---|---|
@@ -29,6 +24,7 @@ is a straight copy:
 ./install.sh --user alice    # deploy for another user
 ./install.sh --dry-run       # only show what would change
 ./install.sh --with-swayview # also install the workspace overview binary
+./install.sh --c-daemons     # use prebuilt C daemons instead of Python (low RAM)
 ```
 
 Manual equivalent:
@@ -39,6 +35,7 @@ cp -a config/home/.config/waybar       ~/.config/
 cp -a config/home/.config/pipewire     ~/.config/
 cp -a config/home/.config/swayview     ~/.config/
 cp -a config/home/.local/bin/*         ~/.local/bin/
+cp -a config/home/.local/share/swaytablet ~/.local/share/
 ```
 
 Then start a session:
@@ -69,6 +66,8 @@ Installed on the device (not provided by this repo):
   install the prebuilt binary with `./install.sh --with-swayview` (pinned
   v0.1.8, checksum verified). On sway < 1.12 it draws labelled tiles; live
   window contents need sway >= 1.12.
+- `powerkeyd` and `sway-tablet-gestures` are Python by default (for testing). there is C versions are available.
+  (build and deploy details in [src/README.md](src/README.md)).
 
 ## Scripts
 
@@ -102,15 +101,7 @@ base by `appmenu.py`, `controlpanel.py` (with its own scale-aware overlay) and
 ### Permissions
 
 `powerkeyd` reads `/dev/input/event*` directly, so it needs access to the input
-device. On most systems this means the user must be in the `input` group, or a
-udev rule must grant access:
-
-```sh
-# Example udev rule — save to /etc/udev/rules.d/99-input-access.rules
-KERNEL=="event[0-9]*", SUBSYSTEM=="input", GROUP="input", MODE="0660"
-```
-
-Then reload: `udevadm control --reload-rules && udevadm trigger`
+device. On most systems this means the user must be in the `input` group.
 
 ## Device-specific bits
 
@@ -139,6 +130,10 @@ Kept out of the shipped configuration on purpose — enable them per machine:
 
 Captured on the device with `grim`.
 
-| Desktop (wallpaper + waybar + on-screen keyboard) | Control panel | Power menu | App grid |
-|---|---|---|---|
-| ![desktop](screenshots/01-desktop.png) | ![control panel](screenshots/02-controlpanel.png) | ![power menu](screenshots/03-powermenu.png) | ![app grid](screenshots/04-appmenu.png) |
+| Desktop (wallpaper + waybar + on-screen keyboard) | Power menu | App grid | Controlpanel (device) |
+|---|---|---|
+| ![desktop](screenshots/01-desktop.png) | ![power menu](screenshots/03-powermenu.png) | ![app grid](screenshots/04-appmenu.png) | ![Device tab](screenshots/02-controlpanel-device.png) |
+
+| Controlpanel (network) | Controlpanel (customization) | Controlpanel (about) | |
+|---|---|---|
+| ![Network tab](screenshots/02-controlpanel-network.png) | ![Customize tab](screenshots/02-controlpanel-customize.png) | ![About tab](screenshots/02-controlpanel-about.png) | |

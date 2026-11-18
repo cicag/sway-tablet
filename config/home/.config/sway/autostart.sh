@@ -69,9 +69,4 @@ fi
 # is only trusted if libinput reports that path as a touch device.
 [ -x "$BIN/sway-tablet-gestures" ] && "$BIN/sway-tablet-gestures" start &
 
-# Auto-set split orientation based on screen rotation:
-#   portrait  -> horizontal split (side by side)
-#   landscape -> vertical split (stacked)
-[ -x "$CFG/sway-split-orient.sh" ] && "$CFG/sway-split-orient.sh" &
-
 export TERMINAL=alacritty

@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 *.pyo
 nuitka-workspace
+src/powerkeyd
+src/sway-tablet-gestures
+src/*.o

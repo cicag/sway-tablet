@@ -28,6 +28,11 @@ gaps inner 4
 gaps outer 3
 smart_borders off
 
+# New tiled containers follow the output shape:
+#   0/180 (800x1280) -> splitv (top/bottom)
+#   90/270 (1280x800) -> splith (left/right)
+default_orientation auto
+
 default_border pixel 1
 default_floating_border pixel 1
 

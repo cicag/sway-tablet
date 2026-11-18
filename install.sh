@@ -4,7 +4,11 @@
 # The config/ tree mirrors absolute on-device paths, so this is a plain copy.
 #
 #   ./install.sh [--user NAME] [--home DIR] [--dry-run] [--no-swaymsg]
-#                 [--with-swayview]
+#                 [--with-swayview] [--c-daemons [--c-bin-dir DIR]]
+#
+# Python daemons are the default. --c-daemons installs the prebuilt C
+# binaries from --c-bin-dir (default /tmp/sway-tablet-bin) instead; build
+# them first with src/build.sh (see src/README.md).
 set -eu
 
 REPO=$(cd "$(dirname "$0")" && pwd)
@@ -13,6 +17,8 @@ HOME_DIR=
 DRY_RUN=0
 RELOAD=1
 WITH_SWAYVIEW=0
+WITH_C=0
+C_BIN_DIR=/tmp/sway-tablet-bin
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -21,7 +27,9 @@ while [ $# -gt 0 ]; do
         --dry-run)  DRY_RUN=1; shift ;;
         --no-swaymsg) RELOAD=0; shift ;;
         --with-swayview) WITH_SWAYVIEW=1; shift ;;
-        -h|--help)  sed -n '2,7p' "$0"; exit 0 ;;
+        --c-daemons) WITH_C=1; shift ;;
+        --c-bin-dir) C_BIN_DIR=$2; shift 2 ;;
+        -h|--help)  sed -n '2,11p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -45,6 +53,23 @@ fi
 [ -d "$HOME_DIR" ] || { echo "home dir not found: $HOME_DIR" >&2; exit 1; }
 
 SRC=$REPO/config/home
+
+# --c-daemons needs both binaries before anything is copied, so a dry run or a
+# broken build fails before touching the target tree.
+if [ "$WITH_C" = 1 ]; then
+    for b in powerkeyd sway-tablet-gestures; do
+        src_bin=$C_BIN_DIR/$b
+        if [ ! -f "$src_bin" ]; then
+            echo "install.sh: --c-daemons: missing $src_bin" >&2
+            echo "  build them first with src/build.sh (see src/README.md)" >&2
+            exit 1
+        fi
+        if [ "$(od -An -N4 -tx1 "$src_bin" | tr -d ' \n')" != "7f454c46" ]; then
+            echo "install.sh: --c-daemons: $src_bin is not an ELF binary" >&2
+            exit 1
+        fi
+    done
+fi
 
 run() {
     if [ "$DRY_RUN" = 1 ]; then
@@ -80,6 +105,9 @@ for d in sway waybar pipewire swayview; do
     done
 done
 
+# Legacy auto-split helper: no longer shipped, drop stale installs.
+run rm -f "$HOME_DIR/.config/sway/sway-split-orient.sh"
+
 # 2. helper scripts
 run mkdir -p "$HOME_DIR/.local/bin"
 for f in "$SRC/.local/bin"/*; do
@@ -89,6 +117,16 @@ for f in "$SRC/.local/bin"/*; do
     run cp -a --no-preserve=ownership "$f" "$HOME_DIR/.local/bin/"
     run chmod +x "$HOME_DIR/.local/bin/$(basename "$f")"
 done
+
+# 2a. optional: replace the Python daemons with prebuilt C binaries.
+# Python stays the default; --c-daemons opts into the compiled versions.
+if [ "$WITH_C" = 1 ]; then
+    for b in powerkeyd sway-tablet-gestures; do
+        # remove first: overwriting a running binary fails with ETXTBSY
+        run rm -f "$HOME_DIR/.local/bin/$b"
+        run install -m755 "$C_BIN_DIR/$b" "$HOME_DIR/.local/bin/$b"
+    done
+fi
 
 # 2b. optional: swayview workspace overview.
 # Not vendored: fetch the pinned upstream release and install the binary.
@@ -130,11 +168,20 @@ if [ -d "$SRC/.local/share/applications" ]; then
     done
 fi
 
+# 3a. local assets (currently the About-tab avatar)
+if [ -d "$SRC/.local/share/swaytablet" ]; then
+    run mkdir -p "$HOME_DIR/.local/share/swaytablet"
+    for f in "$SRC/.local/share/swaytablet"/*; do
+        [ -f "$f" ] || continue
+        run cp -a --no-preserve=ownership "$f" "$HOME_DIR/.local/share/swaytablet/"
+    done
+fi
+
 # when invoked through sudo, hand the deployed files back to the target user
 if [ "$DRY_RUN" = 0 ] && [ "$(id -u)" = 0 ]; then
     run chown -R "$USER_NAME": "$HOME_DIR/.config/sway" "$HOME_DIR/.config/waybar" \
         "$HOME_DIR/.config/pipewire" "$HOME_DIR/.config/swayview" \
-        "$HOME_DIR/.local/bin" 2>/dev/null || true
+        "$HOME_DIR/.local/bin" "$HOME_DIR/.local/share/swaytablet" 2>/dev/null || true
 fi
 
 echo "done"

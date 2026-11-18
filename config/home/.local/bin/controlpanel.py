@@ -15,8 +15,10 @@ import glob
 import json
 import math
 import os
+import platform
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -39,6 +41,12 @@ GEST_CFG_DIR = os.path.join(HOME, ".config", "swaytablet")
 GEST_FILE = os.path.join(GEST_CFG_DIR, "gestures.json")
 GEST_DISABLED = os.path.join(GEST_CFG_DIR, "gestures-disabled")
 GEST_BIN = os.path.join(HOME, ".local", "bin", "sway-tablet-gestures")
+
+# Shown on the About tab.
+REPO_URL = "https://github.com/cicag/sway-tablet"
+REPO_LABEL = "github.com/cicag/sway-tablet"
+AVATAR_FILE = os.path.join(HOME, ".local", "share", "swaytablet",
+                           "avatar-cicag.png")
 
 # Dropdown: user-facing action name -> lisgd command.  None clears the slot.
 # LAUNCH_SENTINEL opens the in-panel app grid; choosing an app replaces it
@@ -332,6 +340,22 @@ button.action-tile {
 .wall-near { opacity: 0.72; }
 .wall-far { opacity: 0.42; }
 .action-box { padding: %(abpad)dpx; }
+.about-avatar {
+  border-radius: 50%%;
+  border: 2px solid %(onacc)s;
+}
+button.repo-link {
+  background-image: none;
+  background-color: %(accent_rgba_50)s;
+  border: none;
+  border-radius: 999px;
+  padding: %(rlpy)dpx %(rlpx)dpx;
+  min-height: 0;
+}
+button.repo-link label { color: #cdd6f4; font-size: %(rlf)dpx; }
+button.repo-link .repo-user { font-size: %(rlf)dpx; font-weight: 700; }
+button.repo-link .repo-url { font-size: %(rlf)dpx; }
+button.repo-link:hover .repo-url { text-decoration: underline; }
 """ % {
         "title": p(20), "cf": p(16), "cpy": p(7), "cpx": p(19),
         "crd2": p(12), "rl": p(15), "vl": p(14), "sub": p(11),
@@ -341,7 +365,9 @@ button.action-tile {
         "atpad": p(10), "atmin": p(52),
         "tm": p(15), "tn": p(14), "ts": p(11),
         "netpad": p(6), "abpad": p(8), "nm": p(11), "ti": p(22),
-        "accent": ACCENT,
+        "rlpy": p(5), "rlpx": p(10), "rlf": p(13),
+        "accent": ACCENT, "onacc": ONACC,
+        "accent_rgba_50": hex_to_rgba(ACCENT, 0.5),
     })
 
 
@@ -687,6 +713,124 @@ def sway_output():
     return "", ""
 
 
+# ---------------------------------------------------------------------------
+# about tab helpers
+# ---------------------------------------------------------------------------
+def read_text(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except Exception:
+        return default
+
+
+def device_model():
+    """Vendor + product name from the DMI tables (e.g. 'Insyde BayTrail')."""
+    vendor = read_text("/sys/devices/virtual/dmi/id/sys_vendor")
+    name = read_text("/sys/devices/virtual/dmi/id/product_name")
+    parts = [p for p in (vendor, name)
+             if p and "to be filled" not in p.lower()]
+    return " ".join(parts) or "unknown"
+
+
+def cpu_summary():
+    model = ""
+    for line in read_text("/proc/cpuinfo").splitlines():
+        if line.lower().startswith("model name"):
+            model = " ".join(line.split(":", 1)[1].split())
+            break
+    cores = os.cpu_count() or 0
+    if model and cores:
+        return "%s (%d cores)" % (model, cores)
+    return model or ("%d cores" % cores if cores else "unknown")
+
+
+def mem_total_text():
+    for line in read_text("/proc/meminfo").splitlines():
+        if line.startswith("MemTotal:"):
+            try:
+                kb = int(line.split()[1])
+            except (IndexError, ValueError):
+                break
+            if kb >= 1048576:
+                return "%.1f GiB" % (kb / 1048576.0)
+            return "%d MiB" % int(round(kb / 1024.0))
+    return "unknown"
+
+
+def disk_usage_text():
+    try:
+        u = shutil.disk_usage("/")
+    except Exception:
+        return "unknown"
+    pct = int(round(u.used * 100.0 / u.total)) if u.total else 0
+    return "%.1f GiB free of %.1f GiB (%d%% used)" % (
+        u.free / float(1 << 30), u.total / float(1 << 30), pct)
+
+
+def uptime_text():
+    try:
+        secs = int(float(read_text("/proc/uptime").split()[0]))
+    except (IndexError, ValueError):
+        return "unknown"
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+    if days:
+        return "%dd %dh %dm" % (days, hours, mins)
+    if hours:
+        return "%dh %dm" % (hours, mins)
+    return "%dm" % mins
+
+
+def os_pretty_name():
+    try:
+        return platform.freedesktop_os_release().get("PRETTY_NAME", "Linux")
+    except Exception:
+        for line in read_text("/etc/os-release").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                return line.split("=", 1)[1].strip().strip('"')
+        return "Linux"
+
+
+def kernel_text():
+    return "%s (%s)" % (platform.release(), platform.machine())
+
+
+def sway_version():
+    rc, out, _err = qrun(["swaymsg", "-t", "get_version"], timeout=5)
+    if rc == 0:
+        try:
+            return "sway %s" % json.loads(out).get("human_readable", "?")
+        except Exception:
+            pass
+    rc, out, _err = qrun(["sway", "--version"], timeout=5)
+    return out or "unknown"
+
+
+def display_summary():
+    rc, out, _err = qrun(["swaymsg", "-t", "get_outputs"], timeout=5)
+    if rc != 0:
+        return "unknown"
+    try:
+        data = json.loads(out)
+    except Exception:
+        return "unknown"
+    rows = []
+    for o in data:
+        if o.get("headless") or not o.get("name"):
+            continue
+        mode = o.get("current_mode") or {}
+        res = "%dx%d" % (mode["width"], mode["height"]) if mode else "?"
+        hz = int(round(mode["refresh"] / 1000.0)) if mode.get("refresh") else 0
+        if hz:
+            res += " @%dHz" % hz
+        tr = o.get("transform") or "normal"
+        rows.append("%s  %s  %s" % (o["name"], res,
+                                    tr if tr == "normal" else tr + "°"))
+    return "\n".join(rows) or "unknown"
+
+
 TRANSFORMS = ["normal", "90", "180", "270"]
 
 
@@ -900,6 +1044,7 @@ class Panel(Gtk.Window):
         self.wifi_nets = []
         self.bt_devs = []
         self.sink_list = []
+        self.sink_combo = None
         self._sink_guard = False
         self.streams = []
         self.app_sliders = []
@@ -977,6 +1122,7 @@ class Panel(Gtk.Window):
         self.wall_card = self.wall_card_ui()
         self._gest_loading = False
         self.gest_card = self.gesture_card_ui()
+        self.about_cards = self.about_cards_ui()
 
         self.notebook = Gtk.Notebook()
         self.notebook.set_hexpand(True)
@@ -986,9 +1132,11 @@ class Panel(Gtk.Window):
         self.device_page = self._tab_page(self.vol_card, self.bri_card)
         self.network_page = self._tab_page(self.wifi_card, self.bt_card)
         self.customize_page = self._tab_page(self.wall_card, self.gest_card)
-        self.tab_labels = [Gtk.Label() for _ in range(3)]
+        self.about_page = self._tab_page(*self.about_cards)
+        self.tab_labels = [Gtk.Label() for _ in range(4)]
         for page, lbl in zip((self.device_page, self.network_page,
-                              self.customize_page), self.tab_labels):
+                              self.customize_page, self.about_page),
+                             self.tab_labels):
             self.notebook.append_page(page, lbl)
         self._update_tab_marks(self.device_page)
         self.notebook.connect("switch-page", self.on_tab_switch)
@@ -1031,9 +1179,11 @@ class Panel(Gtk.Window):
 
     def _update_tab_marks(self, current):
         """Active tab shows [-], the other tabs [+] (same ASCII markers)."""
-        pages = (self.device_page, self.network_page, self.customize_page)
+        pages = (self.device_page, self.network_page, self.customize_page,
+                 self.about_page)
         for lbl, page, name in zip(self.tab_labels, pages,
-                                   ("Device", "Network", "Customize")):
+                                   ("Device", "Network", "Customize",
+                                    "About")):
             lbl.set_text(("[-] " if page is current else "[+] ") + name)
 
     def on_tab_switch(self, _nb, page, _num):
@@ -1051,6 +1201,11 @@ class Panel(Gtk.Window):
                 self.refresh_gestures()
             except Exception as e:
                 plog("tab switch customize err %r" % e)
+        elif page is getattr(self, "about_page", None):
+            try:
+                self.refresh_about()
+            except Exception as e:
+                plog("tab switch about err %r" % e)
 
     def card_head(self, text, actions=None):
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
@@ -1143,6 +1298,108 @@ class Panel(Gtk.Window):
         b.connect("clicked", lambda *a: cb())
         return b
 
+    def info_row(self, name, value=""):
+        """One 'name  value' line for the About cards; returns (row, label)."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                      spacing=int(10 * self.scale))
+        key = Gtk.Label(label=name)
+        key.get_style_context().add_class("label-sub")
+        key.set_xalign(0)
+        key.set_valign(Gtk.Align.START)
+        key.set_size_request(int(84 * self.scale), -1)
+        val = Gtk.Label(label=value)
+        add_classes(val, "label-sub", "bold")
+        val.set_xalign(1)
+        val.set_hexpand(True)
+        val.set_line_wrap(True)
+        val.set_valign(Gtk.Align.START)
+        row.pack_start(key, False, False, 0)
+        row.pack_start(val, True, True, 0)
+        return row, val
+
+    def about_avatar(self, side):
+        """Circular avatar for the About tab, with an initial as fallback."""
+        frame = Gtk.Frame()
+        frame.set_shadow_type(Gtk.ShadowType.NONE)
+        frame.get_style_context().add_class("about-avatar")
+        frame.set_size_request(side, side)
+        try:
+            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                AVATAR_FILE, side, side, True)
+            frame.add(Gtk.Image.new_from_pixbuf(pix))
+        except Exception as e:
+            plog("about avatar err %r" % e)
+            lbl = Gtk.Label(label="c")
+            lbl.get_style_context().add_class("repo-user")
+            lbl.set_size_request(side, side)
+            frame.add(lbl)
+        return frame
+
+    def about_cards_ui(self):
+        """Device spec, system info, then the project link (in that order)."""
+        self.about_values = {}
+        sections = (
+            ("Device", (
+                ("Model", device_model),
+                ("CPU", cpu_summary),
+                ("Memory", mem_total_text),
+                ("Storage", disk_usage_text),
+                ("Display", display_summary),
+            )),
+            ("System", (
+                ("OS", os_pretty_name),
+                ("Kernel", kernel_text),
+                ("Sway", sway_version),
+                ("Host", platform.node),
+                ("Uptime", uptime_text),
+            )),
+        )
+        cards = []
+        for title, rows in sections:
+            card = self.new_card()
+            card.pack_start(self.card_head("[+] " + title), False, False, 0)
+            for name, fn in rows:
+                row, val = self.info_row(name)
+                self.about_values[name] = (val, fn)
+                card.pack_start(row, False, False, 0)
+            cards.append(card)
+
+        link_card = self.new_card()
+        link_card.pack_start(self.card_head("[+] Project"), False, False, 0)
+        note = Gtk.Label(label="Sway tablet config, daemons and panel:")
+        note.get_style_context().add_class("label-sub")
+        note.set_xalign(0)
+        note.set_line_wrap(True)
+        link_card.pack_start(note, False, False, 0)
+        link = Gtk.LinkButton.new(REPO_URL)
+        link.get_style_context().add_class("repo-link")
+        link.set_halign(Gtk.Align.START)
+        link.set_tooltip_text(REPO_URL)
+        default_label = link.get_child()
+        if default_label is not None:
+            default_label.destroy()
+        pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                       spacing=int(6 * self.scale))
+        pill.pack_start(self.about_avatar(int(32 * self.scale)),
+                        False, False, 0)
+        url = Gtk.Label(label=REPO_LABEL)
+        url.get_style_context().add_class("repo-url")
+        url.set_xalign(0)
+        pill.pack_start(url, False, False, 0)
+        link.add(pill)
+        link_card.pack_start(link, False, False, 0)
+        cards.append(link_card)
+        return cards
+
+    def refresh_about(self):
+        for name, (lbl, fn) in getattr(self, "about_values", {}).items():
+            try:
+                lbl.set_text(fn())
+            except Exception as e:
+                lbl.set_text("unknown")
+                plog("about %s err %r" % (name, e))
+        return False
+
     def _clear(self, box):
         for c in box.get_children():
             box.remove(c)
@@ -1167,8 +1424,13 @@ class Panel(Gtk.Window):
             dlbl.get_style_context().add_class("label-sub")
             dlbl.set_xalign(0)
             card.pack_start(dlbl, False, False, 0)
+            self.sink_combo = Gtk.ComboBoxText()
+            self.sink_combo.get_style_context().add_class("gesture-combo")
+            self.sink_combo.set_hexpand(True)
+            self.sink_combo.connect("changed", self.on_sink_changed)
             self.sink_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                                     spacing=int(5 * self.scale))
+            self.sink_box.pack_start(self.sink_combo, False, False, 0)
             card.pack_start(self.sink_box, False, False, 0)
         if streams:
             albl = Gtk.Label(label="[+] App volume")
@@ -1591,7 +1853,8 @@ class Panel(Gtk.Window):
         for fn in (self.refresh_wifi, self.refresh_bt, self.refresh_sinks,
                    self.refresh_wall, self.refresh_gestures,
                    self.refresh_streams, self.refresh_orientation,
-                   self.refresh_screen_block, self.refresh_zerotier):
+                   self.refresh_screen_block, self.refresh_zerotier,
+                   self.refresh_about):
             try:
                 fn()
             except Exception as e:
@@ -2580,6 +2843,14 @@ class Panel(Gtk.Window):
             plog("bt power rc=%s err=%r" % (rc, err))
         GLib.timeout_add(900, self.refresh_bt)
 
+    def on_sink_changed(self, combo):
+        """Apply the sink selected in the output-device dropdown."""
+        idx = combo.get_active()
+        sinks = getattr(self, "sink_list", []) or []
+        if idx < 0 or idx >= len(sinks):
+            return
+        self.on_sink(sinks[idx])
+
     def on_sink(self, sink):
         if self._sink_guard or sink["default"]:
             return
@@ -2650,15 +2921,26 @@ class Panel(Gtk.Window):
     def refresh_sinks(self):
         self._sink_guard = True
         try:
-            self.sink_list = list_sinks()
-            self._clear(self.sink_box)
-            for s in self.sink_list:
-                self.sink_box.pack_start(
-                    self.item_row(s["name"], "active" if s["default"] else "",
-                                  bool(s["default"]),
-                                  lambda ss=s: self.on_sink(ss)),
-                    False, False, 0)
-            self.sink_box.show_all()
+            sinks = list_sinks()
+            self.sink_list = sinks
+            combo = getattr(self, "sink_combo", None)
+            if combo is None:
+                return True
+            # Don't rebuild the list while the user has the popup open.
+            if combo.get_property("popup-shown"):
+                return True
+            combo.remove_all()
+            if not sinks:
+                combo.set_sensitive(False)
+                return True
+            combo.set_sensitive(True)
+            default_idx = -1
+            for i, s in enumerate(sinks):
+                combo.append_text(s["name"])
+                if s["default"]:
+                    default_idx = i
+            if default_idx >= 0:
+                combo.set_active(default_idx)
         finally:
             self._sink_guard = False
         return True

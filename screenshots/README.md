@@ -6,7 +6,10 @@ running.
 | File | Contents |
 |---|---|
 | `01-desktop.png` | sway desktop: wallpaper, bottom waybar and the on-screen keyboard (`wvkbd-mobintl`) |
-| `02-controlpanel.png` | the GTK control panel (`controlpanel`): volume, output devices, brightness, WiFi, Bluetooth and the wallpaper carousel |
+| `02-controlpanel-device.png` | control panel, Device tab (brightness, volume, orientation lock) |
+| `02-controlpanel-network.png` | control panel, Network tab (WiFi and Bluetooth) |
+| `02-controlpanel-customize.png` | control panel, Customize tab (wallpaper and gestures) |
+| `02-controlpanel-about.png` | control panel, About tab (system info and project link) |
 | `03-powermenu.png` | the power menu: shut down, restart, restart waybar, cancel |
 | `04-appmenu.png` | the GTK app grid (`appmenu`) |
 
